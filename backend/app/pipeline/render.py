@@ -12,7 +12,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+import base64
+from html import escape
+
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import JavascriptLexer
@@ -129,34 +132,41 @@ def warm_grade(img: Image.Image) -> Image.Image:
     return ImageEnhance.Contrast(img).enhance(1.04)
 
 
-_font_cache: dict[tuple[str, int], "ImageFont.FreeTypeFont"] = {}
-
-
-def _heading_font(size: int):
-    key = ("heading", size)
-    if key not in _font_cache:
-        _font_cache[key] = ImageFont.truetype(str(FONTS / "Mukta_800ExtraBold.ttf"), size)
-    return _font_cache[key]
-
-
 PYGMENTS_STYLE_FOR_THEME = {"dark": "native", "light": "default", "dracula": "dracula", "monokai": "monokai"}
 
+_heading_font_data_uri: str | None = None
 
-def _truncate_to_fit(lines: list[str], line_h: int, pad: int, max_height: int) -> list[str]:
-    """If the box is still too tall at the font floor, drop trailing lines and mark the cut with an ellipsis."""
-    max_lines = max(1, (max_height - 2 * pad) // line_h)
-    if len(lines) <= max_lines:
-        return lines
-    lines = lines[:max_lines]
-    lines[-1] = (lines[-1][:-1] if lines[-1] else "") + "…"
-    return lines
+
+def _heading_font_uri() -> str:
+    """Base64 data: URI for the heading font — Chromium blocks @font-face file:// URLs loaded
+    from page.set_content() pages (no file-origin), so the bytes must be inlined directly."""
+    global _heading_font_data_uri
+    if _heading_font_data_uri is None:
+        data = (FONTS / "Mukta_800ExtraBold.ttf").read_bytes()
+        _heading_font_data_uri = "data:font/ttf;base64," + base64.b64encode(data).decode("ascii")
+    return _heading_font_data_uri
+
+
+def _screenshot_html(html: str, width: int, height: int) -> Image.Image:
+    """Render an HTML page with a headless browser and screenshot the `.box` element, cropped to
+    its actual rendered size. Shared by the heading, code-block, and raw-HTML overlay renderers."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.set_content(html)
+            page.evaluate("document.fonts.ready")  # wait for any @font-face to finish loading
+            png_bytes = page.locator(".box").screenshot()
+        finally:
+            browser.close()
+    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
 
 
 def _render_code_html(code: str, theme_key: str, base_size: int, max_width: int, max_height: int) -> Image.Image:
     """Render a syntax-highlighted code block via headless Chromium (real CSS text wrapping instead
     of hand-rolled char counting), cropped to its actual rendered size."""
-    from playwright.sync_api import sync_playwright
-
     style_name = PYGMENTS_STYLE_FOR_THEME.get(theme_key, "native")
     formatter = HtmlFormatter(style=style_name, noclasses=True, nowrap=True)
     body_html = highlight(code, JavascriptLexer(), formatter)
@@ -174,16 +184,7 @@ def _render_code_html(code: str, theme_key: str, base_size: int, max_width: int,
         white-space: pre-wrap; word-break: break-word;
       }}
     </style></head><body><div class="box">{body_html}</div></body></html>"""
-
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch()
-        try:
-            page = browser.new_page(viewport={"width": max_width + 2 * pad + 40, "height": max_height + 40})
-            page.set_content(html)
-            png_bytes = page.locator(".box").screenshot()
-        finally:
-            browser.close()
-    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    return _screenshot_html(html, max_width + 2 * pad + 40, max_height + 40)
 
 
 def draw_code_block(img: Image.Image, code: str, theme_key: str = "dark", base_size: int = 44) -> Image.Image:
@@ -221,54 +222,52 @@ def draw_content_image(img: Image.Image, content_image_path: str) -> Image.Image
 
 
 def draw_beat_heading(img: Image.Image, text: str) -> Image.Image:
-    """Paste the beat's question/answer text as a multi-line heading near the top, shrinking the font
-    (and, as a last resort, truncating lines with an ellipsis) so it always stays inside its vertical
-    band. No-op if text is blank."""
+    """Paste the beat's question/answer text as a multi-line heading near the top, rendered via a
+    headless browser so real CSS text wrapping handles layout — clamped to a fixed vertical band
+    (content is cropped, not shrunk, if it's taller than the band). No-op if text is blank."""
     if not text.strip():
         return img
     pad = 60 * WORK_SCALE
     max_height = int(img.height * 0.32)
-    size, min_size = 54 * WORK_SCALE, 20 * WORK_SCALE
-
-    def wrap_at(sz: int) -> tuple[list[str], "ImageFont.FreeTypeFont"]:
-        font = _heading_font(sz)
-        max_width = img.width - 2 * pad
-        out: list[str] = []
-        for raw_line in text.strip().splitlines():
-            words = raw_line.split()
-            if not words:
-                out.append("")
-                continue
-            cur = words[0]
-            for w in words[1:]:
-                cand = cur + " " + w
-                if font.getlength(cand) <= max_width:
-                    cur = cand
-                else:
-                    out.append(cur)
-                    cur = w
-            out.append(cur)
-        return out, font
-
-    while True:
-        lines, font = wrap_at(size)
-        line_h = int(size * 1.35)
-        box_h = len(lines) * line_h + 2 * pad
-        if box_h <= max_height or size <= min_size:
-            break
-        size = max(min_size, int(size * 0.85))
-    if box_h > max_height:
-        lines = _truncate_to_fit(lines, line_h, pad, max_height)
-        box_h = len(lines) * line_h + 2 * pad
-    box = Image.new("RGBA", (img.width, box_h), (10, 8, 20, 190))
-    d = ImageDraw.Draw(box)
-    y = pad
-    for line in lines:
-        w = font.getlength(line)
-        d.text(((img.width - w) / 2, y), line, font=font, fill=(255, 255, 255, 255))
-        y += line_h
+    size = 54 * WORK_SCALE
+    font_url = _heading_font_uri()
+    safe = "<br>".join(escape(line) for line in text.strip().splitlines())
+    html = f"""<!doctype html><html><head><meta charset="utf-8"><style>
+      @font-face {{ font-family: Heading; src: url('{font_url}'); }}
+      html, body {{ margin: 0; padding: 0; background: transparent; }}
+      .box {{
+        width: {img.width}px; box-sizing: border-box; max-height: {max_height}px; overflow: hidden;
+        background: rgba(10, 8, 20, 0.745); padding: {pad}px;
+        font-family: Heading, sans-serif; font-size: {size}px; line-height: 1.35; color: #fff;
+        text-align: center; word-break: break-word;
+      }}
+    </style></head><body><div class="box">{safe}</div></body></html>"""
+    box = _screenshot_html(html, img.width, max_height + 2 * pad)
     img = img.convert("RGBA")
     img.alpha_composite(box, (0, int(90 * WORK_SCALE)))
+    return img.convert("RGB")
+
+
+def draw_custom_html(img: Image.Image, html_fragment: str) -> Image.Image:
+    """Composite the user's own raw HTML into the same band the text heading would occupy, in place
+    of it — rendered on a transparent background so it sits directly on the trademark/background
+    image, same as the other heading options. No-op if blank."""
+    if not html_fragment.strip():
+        return img
+    pad = 20 * WORK_SCALE
+    max_height = int(img.height * 0.32)
+    max_width = img.width - 2 * pad
+    html = f"""<!doctype html><html><head><meta charset="utf-8"><style>
+      html, body {{ margin: 0; padding: 0; background: transparent; }}
+      .box {{
+        display: inline-block; box-sizing: border-box;
+        max-width: {max_width}px; max-height: {max_height}px; overflow: hidden;
+      }}
+    </style></head><body><div class="box">{html_fragment}</div></body></html>"""
+    box = _screenshot_html(html, max_width + 2 * pad, max_height + 2 * pad)
+    img = img.convert("RGBA")
+    pos = ((img.width - box.width) // 2, int(90 * WORK_SCALE))
+    img.alpha_composite(box, pos)
     return img.convert("RGB")
 
 
@@ -293,7 +292,9 @@ def fit_vertical(src: Path, dst: Path, warm: bool = False, overlay: dict | None 
         bg.paste(fg, ((W - fg.width) // 2, (H - fg.height) // 2))
         img = bg
     if overlay:
-        if overlay.get("content_image_path"):
+        if overlay.get("custom_html"):
+            img = draw_custom_html(img, overlay["custom_html"])
+        elif overlay.get("content_image_path"):
             img = draw_content_image(img, overlay["content_image_path"])
         elif overlay.get("show_title_card") and overlay.get("title_text"):
             img = draw_beat_heading(img, overlay["title_text"])
@@ -407,6 +408,7 @@ def render(scenes: list[dict], lang: str, opts: dict, work: Path, out: Path,
             overlay = {"show_title_card": sc.get("show_title_card", False), "title_text": sc.get("narration", ""),
                        "code_text": sc.get("code_text", ""),
                        "content_image_path": sc.get("content_image_path", ""),
+                       "custom_html": sc.get("custom_html", ""),
                        "code_theme": sc.get("code_theme", ""),
                        "code_font_size": sc.get("code_font_size", 0)} if sc.get("beat_type") else None
             fit_vertical(Path(sc["image"]), img, bool(opts.get("warm")), overlay)

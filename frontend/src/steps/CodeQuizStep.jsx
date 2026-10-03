@@ -19,6 +19,12 @@ export default function CodeQuizStep({ p, reload, go }) {
   const [silentBeatSeconds, setSilentBeatSeconds] = useState(p.silent_beat_seconds || 5);
   const [codeTheme, setCodeTheme] = useState(p.code_theme || "");
   const [codeFontSize, setCodeFontSize] = useState(p.code_font_size || "");
+  const [questionHtml, setQuestionHtml] = useState(question?.custom_html || "");
+  const [answerHtml, setAnswerHtml] = useState(answer?.custom_html || "");
+  const [questionPreview, setQuestionPreview] = useState(null);
+  const [answerPreview, setAnswerPreview] = useState(null);
+  const [previewingQ, setPreviewingQ] = useState(false);
+  const [previewingA, setPreviewingA] = useState(false);
   const qImgRef = useRef(); const aImgRef = useRef(); const bgImgRef = useRef();
   const [job, start] = useJob(async (j) => { if (j.status === "done") { await reload(); go(4); } });
   const running = job?.status === "running";
@@ -33,7 +39,30 @@ export default function CodeQuizStep({ p, reload, go }) {
     ...(backgroundImage ? { background_image: backgroundImage } : {}),
     ...(codeTheme ? { code_theme: codeTheme } : {}),
     ...(codeFontSize ? { code_font_size: codeFontSize } : {}),
+    ...(questionHtml ? { question_html: questionHtml } : {}),
+    ...(answerHtml ? { answer_html: answerHtml } : {}),
   }));
+
+  const previewBeat = async (beat) => {
+    const text = beat === "question" ? q : a;
+    const customHtml = beat === "question" ? questionHtml : answerHtml;
+    const img = beat === "question" ? questionImage : answerImage;
+    const setPreview = beat === "question" ? setQuestionPreview : setAnswerPreview;
+    const setBusy = beat === "question" ? setPreviewingQ : setPreviewingA;
+    setBusy(true);
+    try {
+      const r = await api.postForm(`/api/projects/${p.id}/code-quiz/preview`, {
+        beat, text, code, show_title_card: showTitleCard, code_theme: codeTheme, code_font_size: codeFontSize,
+        custom_html: customHtml,
+        ...(img ? { content_image: img } : {}),
+        ...(backgroundImage ? { background_image: backgroundImage } : {}),
+      });
+      setPreview(r.url);
+    } catch (e) {
+      alert(e.message);
+    }
+    setBusy(false);
+  };
 
   return (
     <Section title="Code quiz" hint="This is used exactly as written — no AI rewrites it. Line breaks are kept, so put each multiple-choice option on its own line.">
@@ -41,13 +70,23 @@ export default function CodeQuizStep({ p, reload, go }) {
         <div>
           <Label htmlFor="cq-question">Question</Label>
           <textarea id="cq-question" className="field min-h-32" value={q} onChange={(e) => setQ(e.target.value)} />
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             {question?.content_image_url && <img src={question.content_image_url} alt="" className="h-12 w-12 rounded border border-line object-cover" />}
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => qImgRef.current.click()}>
               {questionImage ? questionImage.name : "Image instead of text (e.g. math)"}
             </button>
             <input ref={qImgRef} type="file" accept="image/*" hidden onChange={(e) => setQuestionImage(e.target.files[0] || null)} />
+            <button type="button" className="btn btn-ghost btn-sm" disabled={previewingQ} onClick={() => previewBeat("question")}>
+              {previewingQ ? "Rendering…" : "Preview"}
+            </button>
           </div>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs text-mist">Advanced: raw HTML instead of plain text</summary>
+            <textarea className="field mt-2 min-h-24 font-mono text-xs" value={questionHtml}
+              onChange={(e) => setQuestionHtml(e.target.value)}
+              placeholder='<div style="color:#fff;font-size:48px">Your own HTML here…</div>' />
+          </details>
+          {questionPreview && <img src={questionPreview} alt="Question preview" className="mt-2 max-h-96 rounded-lg border border-line" />}
         </div>
         <div>
           <Label htmlFor="cq-code">Code snippet (optional)</Label>
@@ -56,13 +95,23 @@ export default function CodeQuizStep({ p, reload, go }) {
         <div>
           <Label htmlFor="cq-answer">Answer + explanation</Label>
           <textarea id="cq-answer" className="field min-h-32" value={a} onChange={(e) => setA(e.target.value)} />
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             {answer?.content_image_url && <img src={answer.content_image_url} alt="" className="h-12 w-12 rounded border border-line object-cover" />}
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => aImgRef.current.click()}>
               {answerImage ? answerImage.name : "Image instead of text (e.g. math)"}
             </button>
             <input ref={aImgRef} type="file" accept="image/*" hidden onChange={(e) => setAnswerImage(e.target.files[0] || null)} />
+            <button type="button" className="btn btn-ghost btn-sm" disabled={previewingA} onClick={() => previewBeat("answer")}>
+              {previewingA ? "Rendering…" : "Preview"}
+            </button>
           </div>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs text-mist">Advanced: raw HTML instead of plain text</summary>
+            <textarea className="field mt-2 min-h-24 font-mono text-xs" value={answerHtml}
+              onChange={(e) => setAnswerHtml(e.target.value)}
+              placeholder='<div style="color:#fff;font-size:48px">Your own HTML here…</div>' />
+          </details>
+          {answerPreview && <img src={answerPreview} alt="Answer preview" className="mt-2 max-h-96 rounded-lg border border-line" />}
         </div>
         <Toggle label="Show question/answer text on screen" checked={showTitleCard} onChange={setShowTitleCard} />
         <Toggle label="Narration (spoken voice)" checked={narrationEnabled} onChange={setNarrationEnabled} />

@@ -138,6 +138,7 @@ def project_view(pid: int) -> dict:
                 "caption": sc.caption, "approved_image_id": sc.approved_image_id,
                 "beat_type": sc.beat_type, "code_text": sc.code_text, "show_title_card": sc.show_title_card,
                 "content_image_url": url_of(sc.content_image_path) if sc.content_image_path else "",
+                "custom_html": sc.custom_html,
                 "images": [{"id": v.id, "url": url_of(v.path), "seed": v.seed, "provider": v.provider,
                             "uploaded": v.uploaded} for v in vs],
                 "audio_url": url_of(sc.audio_path) if sc.audio_path else "",
@@ -752,6 +753,8 @@ async def set_code_quiz(pid: int,
                          silent_beat_seconds: float = Form(5.0),
                          code_theme: str = Form(""),
                          code_font_size: int = Form(0),
+                         question_html: str = Form(""),
+                         answer_html: str = Form(""),
                          question_image: Optional[UploadFile] = File(None),
                          answer_image: Optional[UploadFile] = File(None),
                          background_image: Optional[UploadFile] = File(None)):
@@ -805,12 +808,13 @@ async def set_code_quiz(pid: int,
                     Path(sc.audio_path).unlink(missing_ok=True)
                 s.delete(sc)
             s.commit()
-            specs = [("question", question, q_img), ("wait", "", ""), ("answer", answer, a_img)]
+            specs = [("question", question, q_img, question_html), ("wait", "", "", ""),
+                     ("answer", answer, a_img, answer_html)]
             new_scenes = []
-            for i, (beat, text, img) in enumerate(specs):
+            for i, (beat, text, img, raw_html) in enumerate(specs):
                 sc = Scene(project_id=pid, position=i, narration=text, beat_type=beat,
                            code_text=code if beat in ("question", "answer") else "",
-                           show_title_card=show_title_card, content_image_path=img)
+                           show_title_card=show_title_card, content_image_path=img, custom_html=raw_html)
                 s.add(sc); s.commit(); s.refresh(sc)
                 # The approved image is always the shared trademark/background — a per-beat image
                 # override (img) is composited on top of it at render time, replacing the text
@@ -873,6 +877,7 @@ async def preview_code_quiz_beat(pid: int,
                                   show_title_card: bool = Form(True),
                                   code_theme: str = Form(""),
                                   code_font_size: int = Form(0),
+                                  custom_html: str = Form(""),
                                   content_image: Optional[UploadFile] = File(None),
                                   background_image: Optional[UploadFile] = File(None)):
     """A one-off still image of a single beat (background + title + code), for checking
@@ -908,7 +913,8 @@ async def preview_code_quiz_beat(pid: int,
     theme = code_theme or settings.get("code_theme", "dark")
     font_size = code_font_size or settings.get("code_font_size", 44)
     overlay = {"show_title_card": show_title_card, "title_text": text, "code_text": code,
-               "content_image_path": content_image_path, "code_theme": theme, "code_font_size": font_size}
+               "content_image_path": content_image_path, "custom_html": custom_html,
+               "code_theme": theme, "code_font_size": font_size}
     out = CACHE / f"preview_beat_{uuid.uuid4().hex[:10]}.jpg"
     # fit_vertical may invoke Playwright's sync API (for code blocks), which refuses to run
     # directly on this coroutine's asyncio event loop — offload it to a worker thread.
@@ -973,7 +979,7 @@ def render_video(pid: int, options: dict):
                               "words": json.loads(sc.words_json or "[]"),
                               "beat_type": sc.beat_type, "code_text": sc.code_text,
                               "show_title_card": sc.show_title_card, "narration": sc.narration,
-                              "content_image_path": sc.content_image_path,
+                              "content_image_path": sc.content_image_path, "custom_html": sc.custom_html,
                               "code_theme": resolved_theme, "code_font_size": resolved_font_size})
         if not items:
             problems.append("no scenes")

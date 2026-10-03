@@ -63,6 +63,7 @@ class Scene(SQLModel, table=True):
     code_text: str = ""                  # code snippet to overlay (question/answer beats)
     show_title_card: bool = True         # overlay the beat's narration as an on-screen heading
     content_image_path: str = ""         # optional per-beat image override (math/diagram cases)
+    custom_html: str = ""                # optional raw-HTML override for the heading band (question/answer)
 
 
 class ImageVariant(SQLModel, table=True):
@@ -100,6 +101,9 @@ def init_db() -> None:
             conn.commit()
         if "content_image_path" not in cols:
             conn.exec_driver_sql("ALTER TABLE scene ADD COLUMN content_image_path TEXT DEFAULT ''")
+            conn.commit()
+        if "custom_html" not in cols:
+            conn.exec_driver_sql("ALTER TABLE scene ADD COLUMN custom_html TEXT DEFAULT ''")
             conn.commit()
         proj_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(project)").fetchall()}
         if "narration_enabled" not in proj_cols:

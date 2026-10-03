@@ -253,6 +253,35 @@ def test_code_quiz_preview():
     print("[code-quiz] OK  preview renders a still without touching project scenes")
 
 
+def test_code_quiz_custom_html():
+    """A per-beat raw-HTML override replaces the auto-generated heading entirely, is persisted and
+    exposed via project_view, and renders cleanly end to end."""
+    c.put("/api/settings", json={"tts_provider": "offline"})
+    buf = io.BytesIO(); Image.new("RGB", (600, 1000), (40, 60, 90)).save(buf, "PNG")
+    c.post("/api/settings/trademark-image", files={"file": ("bg.png", buf.getvalue(), "image/png")})
+    pid = c.post("/api/projects", json={"content_type": "code_quiz", "language": "en"}).json()["id"]
+
+    custom = '<div style="color:#fff;font-size:40px">My custom question!</div>'
+    job = wait(c.post(f"/api/projects/{pid}/code-quiz", data={
+        "question": "Q", "code": "let x = 5", "answer": "A", "question_html": custom,
+    }).json())
+    scenes = job["result"]["scenes"]
+    q = next(s for s in scenes if s["beat_type"] == "question")
+    a = next(s for s in scenes if s["beat_type"] == "answer")
+    assert q["custom_html"] == custom, q
+    assert a["custom_html"] == "", a
+
+    job = wait(c.post(f"/api/projects/{pid}/render", json={}).json())
+    assert job["status"] == "done", job
+    print("[code-quiz] OK  per-beat raw-HTML override is stored and renders cleanly")
+
+    r = c.post(f"/api/projects/{pid}/code-quiz/preview", data={
+        "beat": "question", "text": "ignored when custom_html is set", "custom_html": custom,
+    })
+    assert r.status_code == 200, r.json()
+    print("[code-quiz] OK  preview endpoint also supports the raw-HTML override")
+
+
 if __name__ == "__main__":
     run("hi")
     run("en")
@@ -260,4 +289,5 @@ if __name__ == "__main__":
     test_code_quiz_flow()
     test_code_quiz_narration_toggle_and_theme()
     test_code_quiz_preview()
+    test_code_quiz_custom_html()
     print("all good")
