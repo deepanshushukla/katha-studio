@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import StoryStep from "./steps/StoryStep";
+import CodeQuizStep from "./steps/CodeQuizStep";
 import ScriptStep from "./steps/ScriptStep";
 import ImagesStep from "./steps/ImagesStep";
 import VoiceStep from "./steps/VoiceStep";
 import RenderStep from "./steps/RenderStep";
 
-const STEPS = [
+const STORY_STEPS = [
   { n: 1, name: "Story", sub: "Text, language, style" },
   { n: 2, name: "Scenes", sub: "Review the script" },
   { n: 3, name: "Images", sub: "Approve each picture" },
@@ -14,8 +15,17 @@ const STEPS = [
   { n: 5, name: "Video", sub: "Render & download" },
 ];
 
+const CODE_QUIZ_STEPS = [
+  { n: 1, name: "Quiz", sub: "Question, code, answer" },
+  { n: 4, name: "Voice", sub: "Pick the narrator" },
+  { n: 5, name: "Video", sub: "Render & download" },
+];
+
 export function readiness(p) {
   const sc = p?.scenes || [];
+  if (p?.content_type === "code_quiz") {
+    return { 1: true, 4: sc.length > 0, 5: sc.length > 0 && sc.every((s) => s.audio_current) };
+  }
   return {
     1: true,
     2: sc.length > 0,
@@ -56,6 +66,7 @@ export default function Studio({ id }) {
   if (!p || !step) return <p className="text-mist">Opening your story…</p>;
 
   const ready = readiness(p);
+  const STEPS = p.content_type === "code_quiz" ? CODE_QUIZ_STEPS : STORY_STEPS;
   const go = async (n) => {
     setStep(n);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -104,7 +115,7 @@ export default function Studio({ id }) {
         </ol>
       </aside>
       <div className="min-w-0">
-        {step === 1 && <StoryStep {...props} />}
+        {step === 1 && (p.content_type === "code_quiz" ? <CodeQuizStep {...props} /> : <StoryStep {...props} />)}
         {step === 2 && <ScriptStep {...props} />}
         {step === 3 && <ImagesStep {...props} />}
         {step === 4 && <VoiceStep {...props} />}
