@@ -39,12 +39,16 @@ export function StyleFields({ styleKey, setStyleKey, custom, setCustom, styles }
 export default function Home() {
   const [projects, setProjects] = useState(null);
   const [styles, setStyles] = useState([]);
+  const [contentType, setContentType] = useState("story");
   const [story, setStory] = useState("");
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState("hi");
   const [styleKey, setStyleKey] = useState("cinematic");
   const [custom, setCustom] = useState("");
   const [seconds, setSeconds] = useState(60);
+  const [question, setQuestion] = useState("");
+  const [code, setCode] = useState("");
+  const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -58,9 +62,15 @@ export default function Home() {
     setBusy(true);
     setErr("");
     try {
-      const { id } = await api.post("/api/projects", { title, story, language, style_key: styleKey, style_custom: custom, target_seconds: seconds });
-      await api.post(`/api/projects/${id}/script`);
-      window.location.hash = `#/p/${id}`;
+      if (contentType === "code_quiz") {
+        const { id } = await api.post("/api/projects", { title, language, content_type: "code_quiz" });
+        await api.postForm(`/api/projects/${id}/code-quiz`, { question, code, answer });
+        window.location.hash = `#/p/${id}`;
+      } else {
+        const { id } = await api.post("/api/projects", { title, story, language, style_key: styleKey, style_custom: custom, target_seconds: seconds });
+        await api.post(`/api/projects/${id}/script`);
+        window.location.hash = `#/p/${id}`;
+      }
     } catch (e) {
       setErr(e.message);
       setBusy(false);
@@ -88,6 +98,12 @@ export default function Home() {
 
         <div className="mt-6 space-y-5 rounded-2xl border border-line bg-dusk/70 p-5 md:p-6">
           <div>
+            <Label>What are you making?</Label>
+            <Segmented name="Content type" value={contentType} onChange={setContentType}
+              options={[{ value: "story", label: "Mythology story" }, { value: "code_quiz", label: "Code quiz" }]} />
+          </div>
+          {contentType === "story" ? (
+          <div>
             <Label htmlFor="story">Your story</Label>
             <textarea
               id="story"
@@ -98,6 +114,25 @@ export default function Home() {
             />
             <p className="mt-1 text-xs text-mist">{words} words. The script will be condensed to fit the length you pick</p>
           </div>
+          ) : (
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="question">Question (one option per line, if any)</Label>
+              <textarea id="question" className="field min-h-32" value={question} onChange={(e) => setQuestion(e.target.value)}
+                placeholder={"What does this log?\nA) 5\nB) 10\nC) 15\nD) 20"} />
+            </div>
+            <div>
+              <Label htmlFor="code">Code snippet (optional)</Label>
+              <textarea id="code" className="field min-h-32 font-mono text-sm" value={code} onChange={(e) => setCode(e.target.value)} />
+            </div>
+            <div>
+              <Label htmlFor="answer">Answer + explanation</Label>
+              <textarea id="answer" className="field min-h-32" value={answer} onChange={(e) => setAnswer(e.target.value)} />
+            </div>
+          </div>
+          )}
+          {contentType === "story" ? (
+          <>
           <div className="grid gap-5 sm:grid-cols-2">
             <div>
               <Label>Narration language</Label>
@@ -113,15 +148,26 @@ export default function Home() {
             <Label>Art style for this story</Label>
             <StyleFields {...{ styleKey, setStyleKey, custom, setCustom, styles }} />
           </div>
+          </>
+          ) : (
           <div>
-            <Label htmlFor="title">Title (optional)</Label>
-            <input id="title" className="field" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Leave empty and one will be suggested" />
+            <Label>Narration language</Label>
+            <Segmented name="Narration language" value={language} onChange={setLanguage}
+              options={[{ value: "hi", label: "हिन्दी" }, { value: "en", label: "English (Indian)" }]} />
+          </div>
+          )}
+          <div>
+            <Label htmlFor="title">Title</Label>
+            <input id="title" className="field" value={title} onChange={(e) => setTitle(e.target.value)}
+              placeholder={contentType === "story" ? "Leave empty and one will be suggested" : "e.g. JS Closures Quiz #1"} />
           </div>
           {err && <p role="alert" className="text-sm text-sindoor">{err}</p>}
-          <button className="btn btn-primary" disabled={busy || words < 15} onClick={create}>
-            {busy ? "Starting…" : "Write the scene script"}
+          <button className="btn btn-primary"
+            disabled={busy || (contentType === "story" ? words < 15 : !question.trim() || !answer.trim())}
+            onClick={create}>
+            {busy ? "Starting…" : contentType === "story" ? "Write the scene script" : "Create the quiz"}
           </button>
-          {words > 0 && words < 15 && <span className="ml-3 text-sm text-mist">Add a little more story first.</span>}
+          {contentType === "story" && words > 0 && words < 15 && <span className="ml-3 text-sm text-mist">Add a little more story first.</span>}
         </div>
       </div>
 
