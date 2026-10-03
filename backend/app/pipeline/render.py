@@ -11,7 +11,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from pygments import lex
+from pygments.lexers import JavascriptLexer
+from pygments.token import Token
 
 from ..config import CACHE, FFMPEG, FONTS, MUSIC
 from .captions import build_ass
@@ -125,8 +128,132 @@ def warm_grade(img: Image.Image) -> Image.Image:
     return ImageEnhance.Contrast(img).enhance(1.04)
 
 
-def fit_vertical(src: Path, dst: Path, warm: bool = False) -> None:
-    """Make a 9:16 image at 2x output size: crop if close to 9:16, otherwise blurred-background letterbox."""
+MONO_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Menlo.ttc",
+    "/System/Library/Fonts/Monaco.ttf",
+    "/System/Library/Fonts/SFNSMono.ttf",
+]
+_font_cache: dict[tuple[str, int], "ImageFont.FreeTypeFont"] = {}
+
+
+def _mono_font(size: int):
+    key = ("mono", size)
+    if key not in _font_cache:
+        for path in MONO_FONT_CANDIDATES:
+            if Path(path).exists():
+                _font_cache[key] = ImageFont.truetype(path, size)
+                break
+        else:
+            _font_cache[key] = ImageFont.load_default()
+    return _font_cache[key]
+
+
+def _heading_font(size: int):
+    key = ("heading", size)
+    if key not in _font_cache:
+        _font_cache[key] = ImageFont.truetype(str(FONTS / "Mukta_800ExtraBold.ttf"), size)
+    return _font_cache[key]
+
+
+TOKEN_COLORS = {
+    Token.Keyword: (198, 120, 221),
+    Token.Name.Function: (97, 175, 239),
+    Token.Literal.String: (152, 195, 121),
+    Token.Literal.Number: (209, 154, 102),
+    Token.Comment: (92, 99, 112),
+    Token.Operator: (224, 108, 117),
+}
+
+
+def _token_color(tok) -> tuple[int, int, int]:
+    for t, c in TOKEN_COLORS.items():
+        if tok in t:
+            return c
+    return (220, 223, 228)
+
+
+def _wrap_code_lines(code: str, max_chars: int) -> list[str]:
+    out = []
+    for line in code.splitlines() or [""]:
+        while len(line) > max_chars:
+            out.append(line[:max_chars])
+            line = line[max_chars:]
+        out.append(line)
+    return out
+
+
+def draw_code_block(img: Image.Image, code: str) -> Image.Image:
+    """Paste a syntax-highlighted monospace code block, centred, onto img. No-op if code is blank."""
+    if not code.strip():
+        return img
+    size = 44 * WORK_SCALE
+    font = _mono_font(size)
+    max_chars = 34
+    lines = _wrap_code_lines(code, max_chars)
+    line_h = int(size * 1.5)
+    pad = 48 * WORK_SCALE
+    char_w = font.getlength("M") or size * 0.6
+    box_w = min(img.width - 2 * pad, int(max_chars * char_w) + 2 * pad)
+    box_h = len(lines) * line_h + 2 * pad
+    box = Image.new("RGBA", (box_w, box_h), (18, 20, 26, 235))
+    d = ImageDraw.Draw(box)
+    d.rounded_rectangle([0, 0, box_w - 1, box_h - 1], radius=24 * WORK_SCALE, outline=(70, 75, 90, 255), width=3)
+    y = pad
+    for line in lines:
+        x = pad
+        for tok, val in lex(line + "\n", JavascriptLexer()):
+            val = val.rstrip("\n")
+            if not val:
+                continue
+            d.text((x, y), val, font=font, fill=_token_color(tok))
+            x += font.getlength(val)
+        y += line_h
+    img = img.convert("RGBA")
+    pos = ((img.width - box_w) // 2, (img.height - box_h) // 2 + int(120 * WORK_SCALE))
+    img.alpha_composite(box, pos)
+    return img.convert("RGB")
+
+
+def draw_beat_heading(img: Image.Image, text: str) -> Image.Image:
+    """Paste the beat's question/answer text as a multi-line heading near the top. No-op if text is blank."""
+    if not text.strip():
+        return img
+    size = 54 * WORK_SCALE
+    font = _heading_font(size)
+    pad = 60 * WORK_SCALE
+    max_width = img.width - 2 * pad
+    lines: list[str] = []
+    for raw_line in text.strip().splitlines():
+        words = raw_line.split()
+        if not words:
+            lines.append("")
+            continue
+        cur = words[0]
+        for w in words[1:]:
+            cand = cur + " " + w
+            if font.getlength(cand) <= max_width:
+                cur = cand
+            else:
+                lines.append(cur)
+                cur = w
+        lines.append(cur)
+    line_h = int(size * 1.35)
+    box_h = len(lines) * line_h + 2 * pad
+    box = Image.new("RGBA", (img.width, box_h), (10, 8, 20, 190))
+    d = ImageDraw.Draw(box)
+    y = pad
+    for line in lines:
+        w = font.getlength(line)
+        d.text(((img.width - w) / 2, y), line, font=font, fill=(255, 255, 255, 255))
+        y += line_h
+    img = img.convert("RGBA")
+    img.alpha_composite(box, (0, int(90 * WORK_SCALE)))
+    return img.convert("RGB")
+
+
+def fit_vertical(src: Path, dst: Path, warm: bool = False, overlay: dict | None = None) -> None:
+    """Make a 9:16 image at 2x output size: crop if close to 9:16, otherwise blurred-background letterbox.
+    overlay (code-quiz beats only): {"show_title_card": bool, "title_text": str, "code_text": str}."""
     W, H = OUT_W * WORK_SCALE, OUT_H * WORK_SCALE
     img = Image.open(src).convert("RGB")
     r_img, r_out = img.width / img.height, W / H
@@ -144,6 +271,11 @@ def fit_vertical(src: Path, dst: Path, warm: bool = False) -> None:
         fg = img.resize((round(img.width * fg_scale), round(img.height * fg_scale)), Image.LANCZOS)
         bg.paste(fg, ((W - fg.width) // 2, (H - fg.height) // 2))
         img = bg
+    if overlay:
+        if overlay.get("show_title_card") and overlay.get("title_text"):
+            img = draw_beat_heading(img, overlay["title_text"])
+        if overlay.get("code_text"):
+            img = draw_code_block(img, overlay["code_text"])
     if warm:
         img = warm_grade(img)
     img.save(dst, "JPEG", quality=94)
