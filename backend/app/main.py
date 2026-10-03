@@ -135,6 +135,8 @@ def project_view(pid: int) -> dict:
             out_scenes.append({
                 "id": sc.id, "position": sc.position, "narration": sc.narration, "image_prompt": sc.image_prompt,
                 "caption": sc.caption, "approved_image_id": sc.approved_image_id,
+                "beat_type": sc.beat_type, "code_text": sc.code_text, "show_title_card": sc.show_title_card,
+                "content_image_url": url_of(sc.content_image_path) if sc.content_image_path else "",
                 "images": [{"id": v.id, "url": url_of(v.path), "seed": v.seed, "provider": v.provider,
                             "uploaded": v.uploaded} for v in vs],
                 "audio_url": url_of(sc.audio_path) if sc.audio_path else "",
