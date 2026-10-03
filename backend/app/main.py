@@ -224,11 +224,12 @@ def backgrounds():
 # ------------------------------------------------------------------ projects
 class NewProject(BaseModel):
     title: str = ""
-    story: str
+    story: str = ""
     language: str = "hi"
     style_key: str = "cinematic"
     style_custom: str = ""
     target_seconds: int = 60
+    content_type: str = "story"
 
 
 @app.get("/api/projects")
@@ -251,12 +252,15 @@ def list_projects():
 
 @app.post("/api/projects")
 def create_project(req: NewProject):
+    if req.content_type not in ("story", "code_quiz"):
+        raise HTTPException(400, "content_type must be story or code_quiz")
     if req.language not in ("hi", "en"):
         raise HTTPException(400, "language must be hi or en")
     with session() as s:
         p = Project(title=req.title.strip() or "Untitled story", story=req.story, language=req.language,
                     style_key=req.style_key, style_custom=req.style_custom,
                     target_seconds=max(20, min(180, req.target_seconds)), seed=random.randint(1, 2**31 - 1),
+                    content_type=req.content_type,
                     tts_provider=config.load_settings().get("tts_provider", "edge"),
                     voice="hi-IN-SwaraNeural" if req.language == "hi" else "en-IN-NeerjaExpressiveNeural")
         s.add(p); s.commit(); s.refresh(p)
