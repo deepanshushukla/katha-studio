@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { Label, Section, Toggle } from "./components/ui";
 
@@ -54,9 +54,21 @@ export default function Settings({ health }) {
   const [s, setS] = useState(null);
   const [saved, setSaved] = useState("");
   const [models, setModels] = useState([]);
+  const [trademarkUrl, setTrademarkUrl] = useState("");
+  const [tracks, setTracks] = useState([]);
+  const trademarkRef = useRef();
 
-  useEffect(() => { api.get("/api/settings").then(setS); }, []);
+  useEffect(() => {
+    api.get("/api/settings").then(setS);
+    api.get("/api/catalog").then((c) => setTrademarkUrl(c.trademark_url));
+    api.get("/api/music").then((m) => setTracks(m.tracks));
+  }, []);
   if (!s) return <p className="text-mist">Loading settings…</p>;
+
+  const uploadTrademark = async (file) => {
+    const r = await api.upload("/api/settings/trademark-image", file);
+    setTrademarkUrl(r.trademark_url);
+  };
 
   const set = (k, v) => setS((x) => ({ ...x, [k]: v }));
   const save = async () => { setS(await api.put("/api/settings", s)); setSaved("Saved"); setTimeout(() => setSaved(""), 2000); };
@@ -128,6 +140,33 @@ export default function Settings({ health }) {
           { value: "offline", label: "Test tone", sub: "Beeps, for testing" },
         ]} />
         <Tester kind="tts" provider={s.tts_provider} save={save} />
+      </Section>
+
+      <Section title="Code quiz reels" hint="Your trademark background image and default music, reused automatically for every code-quiz video.">
+        <div className="grid gap-5 md:grid-cols-2">
+          <div>
+            <Label>Trademark background image</Label>
+            {trademarkUrl ? (
+              <img src={trademarkUrl} alt="" className="mb-2 h-40 w-auto rounded-lg border border-line object-cover" />
+            ) : (
+              <p className="mb-2 text-sm text-mist">None set yet — code-quiz videos need one.</p>
+            )}
+            <button className="btn btn-ghost btn-sm" onClick={() => trademarkRef.current.click()}>
+              {trademarkUrl ? "Replace image" : "Upload image"}
+            </button>
+            <input ref={trademarkRef} type="file" accept="image/*" hidden
+              onChange={(e) => e.target.files[0] && uploadTrademark(e.target.files[0])} />
+          </div>
+          <div>
+            <Label htmlFor="dcqm">Default music track</Label>
+            <select id="dcqm" className="field" value={s.default_code_quiz_music}
+              onChange={(e) => set("default_code_quiz_music", e.target.value)}>
+              <option value="">No music</option>
+              {tracks.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+            </select>
+            <p className="mt-1 text-xs text-mist">Add tracks from the Video step of any story project — they're shared across the app.</p>
+          </div>
+        </div>
       </Section>
 
       <Section title="Reliability">
