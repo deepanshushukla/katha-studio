@@ -337,6 +337,21 @@ def plan_timeline(durations: list[float], opts: dict) -> dict:
     return {"T": T, "starts": starts, "leads": leads, "lengths": lengths, "total": total}
 
 
+def _escape_drawtext_path(path: Path) -> str:
+    return str(path).replace("\\", "\\\\").replace(":", "\\:")
+
+
+def _countdown_filter(lead: float) -> str:
+    """3-2-1 drawtext overlays, timed to start exactly when the wait beat's (silent) audio starts."""
+    font = _escape_drawtext_path(FONTS / "Mukta_800ExtraBold.ttf")
+    out = ""
+    for n, offset in ((3, 0.0), (2, 1.0), (1, 2.0)):
+        lo, hi = lead + offset, lead + offset + 1
+        out += (f",drawtext=fontfile='{font}':text='{n}':fontsize=420:fontcolor=white:"
+                f"x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t\\,{lo:.3f}\\,{hi:.3f})'")
+    return out
+
+
 def render(scenes: list[dict], lang: str, opts: dict, work: Path, out: Path,
            progress: Callable[[float, str], None], seed: int = 0) -> dict:
     """scenes: [{image, audio, duration, words}] in order."""
@@ -363,12 +378,17 @@ def render(scenes: list[dict], lang: str, opts: dict, work: Path, out: Path,
             motions.append(m); last = m
 
         def make_clip(i: int) -> Path:
+            sc = scenes[i]
             img = work / f"img_{i:02d}.jpg"
-            fit_vertical(Path(scenes[i]["image"]), img, bool(opts.get("warm")))
+            overlay = {"show_title_card": sc.get("show_title_card", False), "title_text": sc.get("narration", ""),
+                       "code_text": sc.get("code_text", "")} if sc.get("beat_type") else None
+            fit_vertical(Path(sc["image"]), img, bool(opts.get("warm")), overlay)
             frames = round(tl["lengths"][i] * FPS)
             clip = work / f"clip_{i:02d}.mp4"
-            _run([FFMPEG, "-y", "-v", "error", "-i", str(img), "-vf",
-                  _zoompan(motions[i], frames, strength) + ",format=yuv420p",
+            vf = _zoompan(motions[i], frames, strength) + ",format=yuv420p"
+            if sc.get("beat_type") == "wait":
+                vf += _countdown_filter(tl["leads"][i])
+            _run([FFMPEG, "-y", "-v", "error", "-i", str(img), "-vf", vf,
                   "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-an", str(clip)])
             return clip
 
