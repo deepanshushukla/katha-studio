@@ -182,19 +182,38 @@ def _wrap_code_lines(code: str, max_chars: int) -> list[str]:
     return out
 
 
+def _truncate_to_fit(lines: list[str], line_h: int, pad: int, max_height: int) -> list[str]:
+    """If the box is still too tall at the font floor, drop trailing lines and mark the cut with an ellipsis."""
+    max_lines = max(1, (max_height - 2 * pad) // line_h)
+    if len(lines) <= max_lines:
+        return lines
+    lines = lines[:max_lines]
+    lines[-1] = (lines[-1][:-1] if lines[-1] else "") + "…"
+    return lines
+
+
 def draw_code_block(img: Image.Image, code: str) -> Image.Image:
-    """Paste a syntax-highlighted monospace code block, centred, onto img. No-op if code is blank."""
+    """Paste a syntax-highlighted monospace code block onto img, shrinking the font (and, as a last
+    resort, truncating lines with an ellipsis) so it always stays inside its vertical band. No-op if blank."""
     if not code.strip():
         return img
-    size = 44 * WORK_SCALE
-    font = _mono_font(size)
-    max_chars = 34
-    lines = _wrap_code_lines(code, max_chars)
-    line_h = int(size * 1.5)
     pad = 48 * WORK_SCALE
+    max_chars = 34
+    max_height = int(img.height * 0.42)
+    size, min_size = 44 * WORK_SCALE, 18 * WORK_SCALE
+    lines = _wrap_code_lines(code, max_chars)
+    while True:
+        font = _mono_font(size)
+        line_h = int(size * 1.5)
+        box_h = len(lines) * line_h + 2 * pad
+        if box_h <= max_height or size <= min_size:
+            break
+        size = max(min_size, int(size * 0.85))
+    if box_h > max_height:
+        lines = _truncate_to_fit(lines, line_h, pad, max_height)
+        box_h = len(lines) * line_h + 2 * pad
     char_w = font.getlength("M") or size * 0.6
     box_w = min(img.width - 2 * pad, int(max_chars * char_w) + 2 * pad)
-    box_h = len(lines) * line_h + 2 * pad
     box = Image.new("RGBA", (box_w, box_h), (18, 20, 26, 235))
     d = ImageDraw.Draw(box)
     d.rounded_rectangle([0, 0, box_w - 1, box_h - 1], radius=24 * WORK_SCALE, outline=(70, 75, 90, 255), width=3)
@@ -209,36 +228,69 @@ def draw_code_block(img: Image.Image, code: str) -> Image.Image:
             x += font.getlength(val)
         y += line_h
     img = img.convert("RGBA")
-    pos = ((img.width - box_w) // 2, (img.height - box_h) // 2 + int(120 * WORK_SCALE))
+    pos = ((img.width - box_w) // 2, int(img.height * 0.40))
     img.alpha_composite(box, pos)
     return img.convert("RGB")
 
 
+def draw_content_image(img: Image.Image, content_image_path: str) -> Image.Image:
+    """Composite a per-beat override image (math/diagram, etc.) into the same band the text heading
+    would occupy, in place of it — scaled to fit, aspect preserved. No-op if the path is blank."""
+    if not content_image_path:
+        return img
+    pad = 60 * WORK_SCALE
+    max_height = int(img.height * 0.32)
+    max_width = img.width - 2 * pad
+    overlay_img = Image.open(content_image_path).convert("RGBA")
+    scale = min(max_width / overlay_img.width, max_height / overlay_img.height)
+    size = (max(1, int(overlay_img.width * scale)), max(1, int(overlay_img.height * scale)))
+    overlay_img = overlay_img.resize(size, Image.LANCZOS)
+    img = img.convert("RGBA")
+    pos = ((img.width - size[0]) // 2, int(90 * WORK_SCALE))
+    img.alpha_composite(overlay_img, pos)
+    return img.convert("RGB")
+
+
 def draw_beat_heading(img: Image.Image, text: str) -> Image.Image:
-    """Paste the beat's question/answer text as a multi-line heading near the top. No-op if text is blank."""
+    """Paste the beat's question/answer text as a multi-line heading near the top, shrinking the font
+    (and, as a last resort, truncating lines with an ellipsis) so it always stays inside its vertical
+    band. No-op if text is blank."""
     if not text.strip():
         return img
-    size = 54 * WORK_SCALE
-    font = _heading_font(size)
     pad = 60 * WORK_SCALE
-    max_width = img.width - 2 * pad
-    lines: list[str] = []
-    for raw_line in text.strip().splitlines():
-        words = raw_line.split()
-        if not words:
-            lines.append("")
-            continue
-        cur = words[0]
-        for w in words[1:]:
-            cand = cur + " " + w
-            if font.getlength(cand) <= max_width:
-                cur = cand
-            else:
-                lines.append(cur)
-                cur = w
-        lines.append(cur)
-    line_h = int(size * 1.35)
-    box_h = len(lines) * line_h + 2 * pad
+    max_height = int(img.height * 0.32)
+    size, min_size = 54 * WORK_SCALE, 20 * WORK_SCALE
+
+    def wrap_at(sz: int) -> tuple[list[str], "ImageFont.FreeTypeFont"]:
+        font = _heading_font(sz)
+        max_width = img.width - 2 * pad
+        out: list[str] = []
+        for raw_line in text.strip().splitlines():
+            words = raw_line.split()
+            if not words:
+                out.append("")
+                continue
+            cur = words[0]
+            for w in words[1:]:
+                cand = cur + " " + w
+                if font.getlength(cand) <= max_width:
+                    cur = cand
+                else:
+                    out.append(cur)
+                    cur = w
+            out.append(cur)
+        return out, font
+
+    while True:
+        lines, font = wrap_at(size)
+        line_h = int(size * 1.35)
+        box_h = len(lines) * line_h + 2 * pad
+        if box_h <= max_height or size <= min_size:
+            break
+        size = max(min_size, int(size * 0.85))
+    if box_h > max_height:
+        lines = _truncate_to_fit(lines, line_h, pad, max_height)
+        box_h = len(lines) * line_h + 2 * pad
     box = Image.new("RGBA", (img.width, box_h), (10, 8, 20, 190))
     d = ImageDraw.Draw(box)
     y = pad
@@ -272,7 +324,9 @@ def fit_vertical(src: Path, dst: Path, warm: bool = False, overlay: dict | None 
         bg.paste(fg, ((W - fg.width) // 2, (H - fg.height) // 2))
         img = bg
     if overlay:
-        if overlay.get("show_title_card") and overlay.get("title_text"):
+        if overlay.get("content_image_path"):
+            img = draw_content_image(img, overlay["content_image_path"])
+        elif overlay.get("show_title_card") and overlay.get("title_text"):
             img = draw_beat_heading(img, overlay["title_text"])
         if overlay.get("code_text"):
             img = draw_code_block(img, overlay["code_text"])
@@ -381,7 +435,8 @@ def render(scenes: list[dict], lang: str, opts: dict, work: Path, out: Path,
             sc = scenes[i]
             img = work / f"img_{i:02d}.jpg"
             overlay = {"show_title_card": sc.get("show_title_card", False), "title_text": sc.get("narration", ""),
-                       "code_text": sc.get("code_text", "")} if sc.get("beat_type") else None
+                       "code_text": sc.get("code_text", ""),
+                       "content_image_path": sc.get("content_image_path", "")} if sc.get("beat_type") else None
             fit_vertical(Path(sc["image"]), img, bool(opts.get("warm")), overlay)
             frames = round(tl["lengths"][i] * FPS)
             clip = work / f"clip_{i:02d}.mp4"
