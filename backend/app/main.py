@@ -593,16 +593,21 @@ def generate_narration(pid: int, req: NarrationReq):
         with session() as s:
             p = get_project(s, pid)
             prov, voice, rate, pitch = p.tts_provider, p.voice, p.rate, p.pitch
-            todo = [(sc.id, sc.narration, audio_key(sc.narration, p)) for sc in scenes_of(s, pid)
+            todo = [(sc.id, sc.narration, sc.beat_type, audio_key(sc.narration, p)) for sc in scenes_of(s, pid)
                     if (req.scene_ids is None or sc.id in req.scene_ids)
                     and not (sc.audio_self and req.scene_ids is None and not req.force)
                     and (req.force or sc.audio_key != audio_key(sc.narration, p) or not sc.audio_path)]
-        for i, (sid, text, key) in enumerate(todo):
+        for i, (sid, text, beat, key) in enumerate(todo):
             job["message"] = f"Recording scene {i + 1}/{len(todo)}…"
             out = pdir(pid) / "audio" / f"scene_{sid}_{key[:10]}.wav"
-            dur, words, used = TTS.synth(text, prov, voice, rate, pitch, out)
-            if used != prov:
-                job["warnings"].append(f"Scene {i + 1}: {prov} failed, used {used} instead")
+            if beat == "wait":
+                # The wait beat carries no narration — it's a fixed silent placeholder, never TTS.
+                TTS.make_silence(out, 3.0)
+                dur, words = 3.0, []
+            else:
+                dur, words, used = TTS.synth(text, prov, voice, rate, pitch, out)
+                if used != prov:
+                    job["warnings"].append(f"Scene {i + 1}: {prov} failed, used {used} instead")
             with session() as s:
                 sc = s.get(Scene, sid)
                 if sc.audio_path and sc.audio_path != str(out):
@@ -799,7 +804,10 @@ async def set_code_quiz(pid: int,
                            code_text=code if beat in ("question", "answer") else "",
                            show_title_card=show_title_card, content_image_path=img)
                 s.add(sc); s.commit(); s.refresh(sc)
-                v = ImageVariant(scene_id=sc.id, path=img or str(bg_path), prompt="(code-quiz)",
+                # The approved image is always the shared trademark/background — a per-beat image
+                # override (img) is composited on top of it at render time, replacing the text
+                # heading for that beat; it never replaces the background itself.
+                v = ImageVariant(scene_id=sc.id, path=str(bg_path), prompt="(code-quiz)",
                                  provider="trademark", uploaded=True)
                 s.add(v); s.commit(); s.refresh(v)
                 sc.approved_image_id = v.id
@@ -894,7 +902,8 @@ def render_video(pid: int, options: dict):
                 items.append({"image": v.path if v else "", "audio": sc.audio_path, "duration": sc.audio_duration,
                               "words": json.loads(sc.words_json or "[]"),
                               "beat_type": sc.beat_type, "code_text": sc.code_text,
-                              "show_title_card": sc.show_title_card, "narration": sc.narration})
+                              "show_title_card": sc.show_title_card, "narration": sc.narration,
+                              "content_image_path": sc.content_image_path})
         if not items:
             problems.append("no scenes")
     if problems:

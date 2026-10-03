@@ -172,6 +172,18 @@ def test_code_quiz_flow():
     assert not scenes2[0]["content_image_url"], "no override uploaded this time, so none should remain"
     print("[code-quiz] OK  re-submitting replaces the 3 beat scenes without accumulating")
 
+    # A voice/pace/pitch change must never re-synthesize the silent "wait" beat through TTS —
+    # it has no narration, so TTS on it either collapses the 3s silence or hard-fails outright.
+    c.patch(f"/api/projects/{pid}", json={"rate": 5})
+    job = wait(c.post(f"/api/projects/{pid}/narration", json={}).json())
+    scenes3 = c.get(f"/api/projects/{pid}").json()["scenes"]
+    wait_scene = next(s for s in scenes3 if s["beat_type"] == "wait")
+    assert abs(wait_scene["audio_duration"] - 3.0) < 0.01, wait_scene
+    assert wait_scene["audio_current"], wait_scene
+    job = wait(c.post(f"/api/projects/{pid}/render", json={}).json())
+    assert job["status"] == "done", job
+    print("[code-quiz] OK  voice/pace change preserves the wait beat's 3s silence and keeps rendering unblocked")
+
     assert not old_question_image.exists(), "replaced per-beat override image must be cleaned up from disk"
     print("[code-quiz] OK  replaced per-beat override image is deleted from disk")
 
