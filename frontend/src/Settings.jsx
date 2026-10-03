@@ -57,6 +57,7 @@ export default function Settings({ health }) {
   const [trademarkUrl, setTrademarkUrl] = useState("");
   const [tracks, setTracks] = useState([]);
   const trademarkRef = useRef();
+  const musicRef = useRef();
 
   useEffect(() => {
     api.get("/api/settings").then(setS);
@@ -68,6 +69,12 @@ export default function Settings({ health }) {
   const uploadTrademark = async (file) => {
     const r = await api.upload("/api/settings/trademark-image", file);
     setTrademarkUrl(r.trademark_url);
+  };
+
+  const uploadMusic = async (file) => {
+    const m = await api.upload("/api/music/upload", file);
+    setTracks(m.tracks);
+    set("default_code_quiz_music", m.name);
   };
 
   const set = (k, v) => setS((x) => ({ ...x, [k]: v }));
@@ -159,12 +166,16 @@ export default function Settings({ health }) {
           </div>
           <div>
             <Label htmlFor="dcqm">Default music track</Label>
-            <select id="dcqm" className="field" value={s.default_code_quiz_music}
-              onChange={(e) => set("default_code_quiz_music", e.target.value)}>
-              <option value="">No music</option>
-              {tracks.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
-            </select>
-            <p className="mt-1 text-xs text-mist">Add tracks from the Video step of any story project — they're shared across the app.</p>
+            <div className="flex gap-2">
+              <select id="dcqm" className="field" value={s.default_code_quiz_music}
+                onChange={(e) => set("default_code_quiz_music", e.target.value)}>
+                <option value="">No music</option>
+                {tracks.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+              </select>
+              <button className="btn btn-ghost btn-sm" onClick={() => musicRef.current.click()}>Add a track</button>
+              <input ref={musicRef} type="file" accept="audio/*" hidden onChange={(e) => e.target.files[0] && uploadMusic(e.target.files[0])} />
+            </div>
+            <p className="mt-1 text-xs text-mist">Tracks you add here are shared across the app (also usable from any story project's Video step).</p>
           </div>
         </div>
       </Section>
