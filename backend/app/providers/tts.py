@@ -66,6 +66,14 @@ def to_wav(src: Path, dst: Path) -> None:
         raise TTSError(f"ffmpeg conversion failed: {p.stderr[-300:]}")
 
 
+def make_silence(out_wav: Path, seconds: float, sr: int = 48000) -> None:
+    """A silent mono WAV of the given length — used for the code-quiz "wait" beat, which has no narration."""
+    n = int(sr * seconds)
+    with wave.open(str(out_wav), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+        w.writeframes(b"\x00\x00" * n)
+
+
 def speech_bounds(path: Path, total: float) -> tuple[float, float]:
     """First/last non-silent moments, via ffmpeg silencedetect."""
     p = subprocess.run([FFMPEG, "-v", "info", "-i", str(path), "-af", "silencedetect=n=-35dB:d=0.12", "-f", "null", "-"],
