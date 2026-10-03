@@ -892,7 +892,9 @@ def render_video(pid: int, options: dict):
                 problems.append(f"scene {i + 1} narration is missing or out of date")
             if (v or not need_images) and sc.audio_path:
                 items.append({"image": v.path if v else "", "audio": sc.audio_path, "duration": sc.audio_duration,
-                              "words": json.loads(sc.words_json or "[]")})
+                              "words": json.loads(sc.words_json or "[]"),
+                              "beat_type": sc.beat_type, "code_text": sc.code_text,
+                              "show_title_card": sc.show_title_card, "narration": sc.narration})
         if not items:
             problems.append("no scenes")
     if problems:
