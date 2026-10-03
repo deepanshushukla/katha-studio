@@ -19,6 +19,7 @@ class Project(SQLModel, table=True):
     language: str = "hi"                 # hi | en
     style_key: str = "cinematic"
     style_custom: str = ""
+    content_type: str = "story"          # story | code_quiz
     target_seconds: int = 60
     seed: int = 0
     characters_json: str = "[]"          # [{name, description}]
@@ -54,6 +55,10 @@ class Scene(SQLModel, table=True):
     audio_key: str = ""                  # hash of text+voice settings used for the audio
     audio_self: bool = False             # True if audio_path is a user-recorded take, not TTS
     words_json: str = "[]"               # [{w, start, end}] seconds, relative to scene audio
+    beat_type: str = ""                  # "" (story scene) | question | wait | answer
+    code_text: str = ""                  # code snippet to overlay (question/answer beats)
+    show_title_card: bool = True         # overlay the beat's narration as an on-screen heading
+    content_image_path: str = ""         # optional per-beat image override (math/diagram cases)
 
 
 class ImageVariant(SQLModel, table=True):
@@ -76,6 +81,21 @@ def init_db() -> None:
             conn.commit()
         if "audio_original_path" not in cols:
             conn.exec_driver_sql("ALTER TABLE scene ADD COLUMN audio_original_path TEXT DEFAULT ''")
+            conn.commit()
+        if "content_type" not in {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(project)").fetchall()}:
+            conn.exec_driver_sql("ALTER TABLE project ADD COLUMN content_type TEXT DEFAULT 'story'")
+            conn.commit()
+        if "beat_type" not in cols:
+            conn.exec_driver_sql("ALTER TABLE scene ADD COLUMN beat_type TEXT DEFAULT ''")
+            conn.commit()
+        if "code_text" not in cols:
+            conn.exec_driver_sql("ALTER TABLE scene ADD COLUMN code_text TEXT DEFAULT ''")
+            conn.commit()
+        if "show_title_card" not in cols:
+            conn.exec_driver_sql("ALTER TABLE scene ADD COLUMN show_title_card BOOLEAN DEFAULT 1")
+            conn.commit()
+        if "content_image_path" not in cols:
+            conn.exec_driver_sql("ALTER TABLE scene ADD COLUMN content_image_path TEXT DEFAULT ''")
             conn.commit()
 
 
