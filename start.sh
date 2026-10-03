@@ -84,6 +84,12 @@ if [[ ! -f "$STAMP" ]]; then
   "$VENV/bin/pip" install -q -r backend/requirements.txt
   touch "$STAMP"
 fi
+PW_STAMP="$VENV/.playwright-chromium"
+if [[ ! -f "$PW_STAMP" ]]; then
+  say "Downloading Chromium for code-quiz rendering (one-time, ~300MB)…"
+  "$VENV/bin/playwright" install chromium
+  touch "$PW_STAMP"
+fi
 if [[ $LOCAL_IMAGES == 1 ]]; then
   [[ "$(uname -m)" == "arm64" ]] || die "Local image generation (mflux) needs an Apple Silicon Mac."
   say "Installing mflux (FLUX on Apple Silicon)…"

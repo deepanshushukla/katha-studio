@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.config import FFMPEG, FFPROBE, PROJECTS, TRADEMARK_IMAGE  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Scene, session  # noqa: E402
+from sqlmodel import select  # noqa: E402
 
 c = TestClient(app)
 
@@ -229,10 +230,34 @@ def test_code_quiz_narration_toggle_and_theme():
     print("[code-quiz] OK  narration-off setting survives a Voice-step regeneration too")
 
 
+def test_code_quiz_preview():
+    """The Quiz step's preview endpoint renders a single composed still (background + title + code)
+    without touching the database, for checking formatting before saving/rendering."""
+    c.put("/api/settings", json={"image_provider": "offline"})
+    buf = io.BytesIO(); Image.new("RGB", (600, 1000), (40, 60, 90)).save(buf, "PNG")
+    c.post("/api/settings/trademark-image", files={"file": ("bg.png", buf.getvalue(), "image/png")})
+    pid = c.post("/api/projects", json={"content_type": "code_quiz", "language": "en"}).json()["id"]
+
+    r = c.post(f"/api/projects/{pid}/code-quiz/preview", data={
+        "beat": "question", "text": "What does this log?\nA) 5\nB) 10", "code": "let x = 5",
+        "show_title_card": "true",
+    })
+    assert r.status_code == 200, r.json()
+    assert r.json()["url"].startswith("/cache/preview_beat_")
+
+    r2 = c.post(f"/api/projects/{pid}/code-quiz/preview", data={"beat": "not-a-beat", "text": "x"})
+    assert r2.status_code == 400
+
+    with session() as s:
+        assert not s.exec(select(Scene).where(Scene.project_id == pid)).all(), "preview must not create scenes"
+    print("[code-quiz] OK  preview renders a still without touching project scenes")
+
+
 if __name__ == "__main__":
     run("hi")
     run("en")
     test_self_recording_voice_change()
     test_code_quiz_flow()
     test_code_quiz_narration_toggle_and_theme()
+    test_code_quiz_preview()
     print("all good")

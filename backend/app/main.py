@@ -1,6 +1,7 @@
 """Katha Studio API."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import random
@@ -862,6 +863,57 @@ async def set_code_quiz(pid: int,
         job["message"] = "Code quiz ready"
         return project_view(pid)
     return job_public(start_job(f"code-quiz:{pid}", pid, work))
+
+
+@app.post("/api/projects/{pid}/code-quiz/preview")
+async def preview_code_quiz_beat(pid: int,
+                                  beat: str = Form(...),
+                                  text: str = Form(...),
+                                  code: str = Form(""),
+                                  show_title_card: bool = Form(True),
+                                  code_theme: str = Form(""),
+                                  code_font_size: int = Form(0),
+                                  content_image: Optional[UploadFile] = File(None),
+                                  background_image: Optional[UploadFile] = File(None)):
+    """A one-off still image of a single beat (background + title + code), for checking
+    formatting from the Quiz step before rendering the full video. Nothing is persisted."""
+    if beat not in ("question", "answer"):
+        raise HTTPException(400, "beat must be question or answer")
+    with session() as s:
+        get_project(s, pid)
+
+    if background_image is not None:
+        data = await background_image.read()
+        bg_path = CACHE / f"preview_bg_{uuid.uuid4().hex[:8]}.png"
+        try:
+            IMG._save_bytes(data, bg_path)
+        except Exception:
+            raise HTTPException(400, "Background image is not a valid image")
+    elif config.TRADEMARK_IMAGE.exists():
+        bg_path = config.TRADEMARK_IMAGE
+    else:
+        raise HTTPException(400, "Set a trademark background image in Settings first, or upload one for this video")
+
+    content_image_path = ""
+    if content_image is not None:
+        data = await content_image.read()
+        out_img = CACHE / f"preview_content_{uuid.uuid4().hex[:8]}.png"
+        try:
+            IMG._save_bytes(data, out_img)
+        except Exception:
+            raise HTTPException(400, "That file is not an image")
+        content_image_path = str(out_img)
+
+    settings = config.load_settings()
+    theme = code_theme or settings.get("code_theme", "dark")
+    font_size = code_font_size or settings.get("code_font_size", 44)
+    overlay = {"show_title_card": show_title_card, "title_text": text, "code_text": code,
+               "content_image_path": content_image_path, "code_theme": theme, "code_font_size": font_size}
+    out = CACHE / f"preview_beat_{uuid.uuid4().hex[:10]}.jpg"
+    # fit_vertical may invoke Playwright's sync API (for code blocks), which refuses to run
+    # directly on this coroutine's asyncio event loop — offload it to a worker thread.
+    await asyncio.to_thread(R.fit_vertical, bg_path, out, False, overlay)
+    return {"url": url_of(out)}
 
 
 # ------------------------------------------------------------------ step 5: render

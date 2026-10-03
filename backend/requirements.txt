@@ -6,3 +6,4 @@ pillow>=10.4
 python-multipart>=0.0.9
 edge-tts>=7.0
 pygments>=2.17
+playwright>=1.47          # also run: playwright install chromium (one-time, ~300MB)

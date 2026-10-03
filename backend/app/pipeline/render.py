@@ -1,6 +1,7 @@
 """FFmpeg composition: Ken Burns clips -> crossfades -> grade -> captions -> narration + ducked music."""
 from __future__ import annotations
 
+import io
 import json
 import os
 import random
@@ -12,9 +13,9 @@ from pathlib import Path
 from typing import Callable
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
-from pygments import lex
+from pygments import highlight
+from pygments.formatters import HtmlFormatter
 from pygments.lexers import JavascriptLexer
-from pygments.token import Token
 
 from ..config import CACHE, FFMPEG, FONTS, MUSIC
 from .captions import build_ass
@@ -128,24 +129,7 @@ def warm_grade(img: Image.Image) -> Image.Image:
     return ImageEnhance.Contrast(img).enhance(1.04)
 
 
-MONO_FONT_CANDIDATES = [
-    "/System/Library/Fonts/Menlo.ttc",
-    "/System/Library/Fonts/Monaco.ttf",
-    "/System/Library/Fonts/SFNSMono.ttf",
-]
 _font_cache: dict[tuple[str, int], "ImageFont.FreeTypeFont"] = {}
-
-
-def _mono_font(size: int):
-    key = ("mono", size)
-    if key not in _font_cache:
-        for path in MONO_FONT_CANDIDATES:
-            if Path(path).exists():
-                _font_cache[key] = ImageFont.truetype(path, size)
-                break
-        else:
-            _font_cache[key] = ImageFont.load_default()
-    return _font_cache[key]
 
 
 def _heading_font(size: int):
@@ -155,57 +139,7 @@ def _heading_font(size: int):
     return _font_cache[key]
 
 
-CODE_THEMES = {
-    "dark": {
-        "bg": (18, 20, 26, 235), "outline": (70, 75, 90, 255), "default": (220, 223, 228),
-        "tokens": {
-            Token.Keyword: (198, 120, 221), Token.Name.Function: (97, 175, 239),
-            Token.Literal.String: (152, 195, 121), Token.Literal.Number: (209, 154, 102),
-            Token.Comment: (92, 99, 112), Token.Operator: (224, 108, 117),
-        },
-    },
-    "light": {
-        "bg": (248, 248, 242, 235), "outline": (200, 200, 200, 255), "default": (40, 42, 54),
-        "tokens": {
-            Token.Keyword: (170, 13, 145), Token.Name.Function: (0, 92, 197),
-            Token.Literal.String: (0, 128, 0), Token.Literal.Number: (28, 0, 207),
-            Token.Comment: (106, 115, 125), Token.Operator: (215, 58, 73),
-        },
-    },
-    "dracula": {
-        "bg": (40, 42, 54, 235), "outline": (98, 114, 164, 255), "default": (248, 248, 242),
-        "tokens": {
-            Token.Keyword: (255, 121, 198), Token.Name.Function: (80, 250, 123),
-            Token.Literal.String: (241, 250, 140), Token.Literal.Number: (189, 147, 249),
-            Token.Comment: (98, 114, 164), Token.Operator: (255, 85, 85),
-        },
-    },
-    "monokai": {
-        "bg": (39, 40, 34, 235), "outline": (73, 72, 62, 255), "default": (248, 248, 242),
-        "tokens": {
-            Token.Keyword: (249, 38, 114), Token.Name.Function: (166, 226, 46),
-            Token.Literal.String: (230, 219, 116), Token.Literal.Number: (174, 129, 255),
-            Token.Comment: (117, 113, 94), Token.Operator: (249, 38, 114),
-        },
-    },
-}
-
-
-def _token_color(tok, theme: dict) -> tuple[int, int, int]:
-    for t, c in theme["tokens"].items():
-        if tok in t:
-            return c
-    return theme["default"]
-
-
-def _wrap_code_lines(code: str, max_chars: int) -> list[str]:
-    out = []
-    for line in code.splitlines() or [""]:
-        while len(line) > max_chars:
-            out.append(line[:max_chars])
-            line = line[max_chars:]
-        out.append(line)
-    return out
+PYGMENTS_STYLE_FOR_THEME = {"dark": "native", "light": "default", "dracula": "dracula", "monokai": "monokai"}
 
 
 def _truncate_to_fit(lines: list[str], line_h: int, pad: int, max_height: int) -> list[str]:
@@ -218,44 +152,52 @@ def _truncate_to_fit(lines: list[str], line_h: int, pad: int, max_height: int) -
     return lines
 
 
+def _render_code_html(code: str, theme_key: str, base_size: int, max_width: int, max_height: int) -> Image.Image:
+    """Render a syntax-highlighted code block via headless Chromium (real CSS text wrapping instead
+    of hand-rolled char counting), cropped to its actual rendered size."""
+    from playwright.sync_api import sync_playwright
+
+    style_name = PYGMENTS_STYLE_FOR_THEME.get(theme_key, "native")
+    formatter = HtmlFormatter(style=style_name, noclasses=True, nowrap=True)
+    body_html = highlight(code, JavascriptLexer(), formatter)
+    bg = formatter.style.background_color or "#18141a"
+    pad = 48 * WORK_SCALE
+    font_size = max(18, base_size) * WORK_SCALE
+    html = f"""<!doctype html><html><head><meta charset="utf-8"><style>
+      html, body {{ margin: 0; padding: 0; background: transparent; }}
+      .box {{
+        display: inline-block; box-sizing: border-box;
+        max-width: {max_width}px; max-height: {max_height}px; overflow: hidden;
+        background: {bg}; border-radius: {24 * WORK_SCALE}px; padding: {pad}px;
+        border: 3px solid rgba(255,255,255,0.15);
+        font-family: ui-monospace, Menlo, Consolas, monospace; font-size: {font_size}px; line-height: 1.5;
+        white-space: pre-wrap; word-break: break-word;
+      }}
+    </style></head><body><div class="box">{body_html}</div></body></html>"""
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": max_width + 2 * pad + 40, "height": max_height + 40})
+            page.set_content(html)
+            png_bytes = page.locator(".box").screenshot()
+        finally:
+            browser.close()
+    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+
 def draw_code_block(img: Image.Image, code: str, theme_key: str = "dark", base_size: int = 44) -> Image.Image:
-    """Paste a syntax-highlighted monospace code block onto img, shrinking the font (and, as a last
-    resort, truncating lines with an ellipsis) so it always stays inside its vertical band. No-op if blank."""
+    """Paste a syntax-highlighted code block onto img, rendered via a headless browser so real CSS
+    handles text wrapping instead of hand-rolled character counting. Clamped to a fixed vertical
+    band (content is cropped, not shrunk, if it's taller than the band). No-op if code is blank."""
     if not code.strip():
         return img
-    theme = CODE_THEMES.get(theme_key, CODE_THEMES["dark"])
     pad = 48 * WORK_SCALE
-    max_chars = 34
+    max_width = img.width - 2 * pad
     max_height = int(img.height * 0.42)
-    size, min_size = max(18, base_size) * WORK_SCALE, 18 * WORK_SCALE
-    lines = _wrap_code_lines(code, max_chars)
-    while True:
-        font = _mono_font(size)
-        line_h = int(size * 1.5)
-        box_h = len(lines) * line_h + 2 * pad
-        if box_h <= max_height or size <= min_size:
-            break
-        size = max(min_size, int(size * 0.85))
-    if box_h > max_height:
-        lines = _truncate_to_fit(lines, line_h, pad, max_height)
-        box_h = len(lines) * line_h + 2 * pad
-    char_w = font.getlength("M") or size * 0.6
-    box_w = min(img.width - 2 * pad, int(max_chars * char_w) + 2 * pad)
-    box = Image.new("RGBA", (box_w, box_h), theme["bg"])
-    d = ImageDraw.Draw(box)
-    d.rounded_rectangle([0, 0, box_w - 1, box_h - 1], radius=24 * WORK_SCALE, outline=theme["outline"], width=3)
-    y = pad
-    for line in lines:
-        x = pad
-        for tok, val in lex(line + "\n", JavascriptLexer()):
-            val = val.rstrip("\n")
-            if not val:
-                continue
-            d.text((x, y), val, font=font, fill=_token_color(tok, theme))
-            x += font.getlength(val)
-        y += line_h
+    box = _render_code_html(code, theme_key, base_size, max_width, max_height)
     img = img.convert("RGBA")
-    pos = ((img.width - box_w) // 2, int(img.height * 0.40))
+    pos = ((img.width - box.width) // 2, int(img.height * 0.40))
     img.alpha_composite(box, pos)
     return img.convert("RGB")
 
