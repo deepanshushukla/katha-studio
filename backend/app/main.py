@@ -96,8 +96,14 @@ def url_of(path: str | Path) -> str:
         rel = p.resolve().relative_to(PROJECTS.resolve())
         return f"/files/{rel.as_posix()}?v={int(p.stat().st_mtime)}" if p.exists() else ""
     except ValueError:
+        pass
+    try:
         rel = p.resolve().relative_to(CACHE.resolve())
         return f"/cache/{rel.as_posix()}"
+    except ValueError:
+        pass
+    rel = p.resolve().relative_to(config.TRADEMARK_DIR.resolve())
+    return f"/trademark/{rel.as_posix()}?v={int(p.stat().st_mtime)}" if p.exists() else ""
 
 
 def audio_key(text: str, p: Project) -> str:
@@ -722,6 +728,115 @@ async def change_voice(sid: int, ref_file: Optional[UploadFile] = File(None),
         job["message"] = "Updated"
         return project_view(pid)
     return job_public(start_job(f"voicechange:{sid}", pid, work))
+
+
+@app.post("/api/projects/{pid}/code-quiz")
+async def set_code_quiz(pid: int,
+                         question: str = Form(...),
+                         answer: str = Form(...),
+                         code: str = Form(""),
+                         show_title_card: bool = Form(True),
+                         music: str = Form(""),
+                         question_image: Optional[UploadFile] = File(None),
+                         answer_image: Optional[UploadFile] = File(None),
+                         background_image: Optional[UploadFile] = File(None)):
+    with session() as s:
+        p = get_project(s, pid)
+        if p.content_type != "code_quiz":
+            raise HTTPException(400, "project is not a code_quiz project")
+    if not question.strip() or not answer.strip():
+        raise HTTPException(400, "Question and answer are required")
+
+    if background_image is not None:
+        data = await background_image.read()
+        bg_path = pdir(pid) / "images" / "background_override.png"
+        try:
+            IMG._save_bytes(data, bg_path)
+        except Exception:
+            raise HTTPException(400, "Background image is not a valid image")
+    elif config.TRADEMARK_IMAGE.exists():
+        bg_path = config.TRADEMARK_IMAGE
+    else:
+        raise HTTPException(400, "Set a trademark background image in Settings first, or upload one for this video")
+
+    async def save_optional(f: Optional[UploadFile]) -> str:
+        if f is None:
+            return ""
+        data = await f.read()
+        out = pdir(pid) / "images" / f"beat_{uuid.uuid4().hex[:8]}.png"
+        try:
+            IMG._save_bytes(data, out)
+        except Exception:
+            raise HTTPException(400, "That file is not an image")
+        return str(out)
+
+    q_img = await save_optional(question_image)
+    a_img = await save_optional(answer_image)
+    resolved_music = music or config.load_settings().get("default_code_quiz_music", "")
+
+    def work(job):
+        job["message"] = "Setting up the quiz…"
+        with session() as s:
+            p = get_project(s, pid)
+            for sc in scenes_of(s, pid):
+                for v in variants_of(s, sc.id):
+                    s.delete(v)
+                # Only ever delete a beat's own per-beat override upload here — never the shared
+                # background (global trademark or this request's fresh override), which other
+                # beats' rows may also point at.
+                if sc.content_image_path:
+                    Path(sc.content_image_path).unlink(missing_ok=True)
+                if sc.audio_path:
+                    Path(sc.audio_path).unlink(missing_ok=True)
+                s.delete(sc)
+            s.commit()
+            specs = [("question", question, q_img), ("wait", "", ""), ("answer", answer, a_img)]
+            new_scenes = []
+            for i, (beat, text, img) in enumerate(specs):
+                sc = Scene(project_id=pid, position=i, narration=text, beat_type=beat,
+                           code_text=code if beat in ("question", "answer") else "",
+                           show_title_card=show_title_card, content_image_path=img)
+                s.add(sc); s.commit(); s.refresh(sc)
+                v = ImageVariant(scene_id=sc.id, path=img or str(bg_path), prompt="(code-quiz)",
+                                 provider="trademark", uploaded=True)
+                s.add(v); s.commit(); s.refresh(v)
+                sc.approved_image_id = v.id
+                s.add(sc); s.commit()
+                new_scenes.append(sc.id)
+            p.render_json = json.dumps({**json.loads(p.render_json or "{}"), "music": resolved_music},
+                                        ensure_ascii=False)
+            p.step = max(p.step, 2)
+            touch(p); s.add(p); s.commit()
+            prov, voice, rate, pitch = p.tts_provider, p.voice, p.rate, p.pitch
+
+        for i, sid in enumerate(new_scenes):
+            with session() as s:
+                sc = s.get(Scene, sid)
+                text, beat = sc.narration, sc.beat_type
+                p = get_project(s, pid)
+            job["message"] = f"Recording beat {i + 1}/3…"
+            if beat == "wait":
+                out = pdir(pid) / "audio" / f"scene_{sid}_wait.wav"
+                TTS.make_silence(out, 3.0)
+                dur, words = 3.0, []
+            else:
+                out = pdir(pid) / "audio" / f"scene_{sid}_{uuid.uuid4().hex[:8]}.wav"
+                dur, words, used = TTS.synth(text, prov, voice, rate, pitch, out)
+                if used != prov:
+                    job["warnings"].append(f"{beat}: {prov} failed, used {used} instead")
+            with session() as s:
+                sc = s.get(Scene, sid)
+                sc.audio_path, sc.audio_duration = str(out), dur
+                sc.audio_key = audio_key(sc.narration, p)
+                sc.words_json = json.dumps(words, ensure_ascii=False)
+                s.add(sc); s.commit()
+            job["progress"] = (i + 1) / 3
+
+        with session() as s:
+            p = get_project(s, pid); p.step = max(p.step, 4); touch(p); s.add(p); s.commit()
+        job["message"] = "Code quiz ready"
+        return project_view(pid)
+    return job_public(start_job(f"code-quiz:{pid}", pid, work))
 
 
 # ------------------------------------------------------------------ step 5: render
