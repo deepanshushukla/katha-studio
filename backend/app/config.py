@@ -16,10 +16,12 @@ CACHE = DATA / "cache"
 MUSIC = ROOT / "music"
 FONTS = BACKEND / "fonts"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
+TRADEMARK_DIR = DATA / "trademark"
+TRADEMARK_IMAGE = TRADEMARK_DIR / "background.png"
 SETTINGS_FILE = DATA / "settings.json"
 DB_FILE = DATA / "katha.db"
 
-for p in (DATA, PROJECTS, CACHE, MUSIC):
+for p in (DATA, PROJECTS, CACHE, MUSIC, TRADEMARK_DIR):
     p.mkdir(parents=True, exist_ok=True)
 
 
@@ -70,6 +72,8 @@ DEFAULTS: dict = {
     "tts_provider": "edge",              # edge | offline
     # Try other configured providers automatically if the chosen one fails
     "auto_fallback": True,
+    # Code quiz
+    "default_code_quiz_music": "",       # filename inside MUSIC, picked by default for new code_quiz projects
 }
 
 _lock = Lock()
