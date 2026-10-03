@@ -5,3 +5,4 @@ httpx>=0.27
 pillow>=10.4
 python-multipart>=0.0.9
 edge-tts>=7.0
+pygments>=2.17
