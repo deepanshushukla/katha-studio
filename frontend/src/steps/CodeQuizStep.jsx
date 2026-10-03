@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, useJob } from "../api";
 import { Label, Progress, Section, Toggle } from "../components/ui";
+import { CODE_THEMES } from "../Settings";
 
 export default function CodeQuizStep({ p, reload, go }) {
   const question = p.scenes.find((s) => s.beat_type === "question");
@@ -14,6 +15,10 @@ export default function CodeQuizStep({ p, reload, go }) {
   const [questionImage, setQuestionImage] = useState(null);
   const [answerImage, setAnswerImage] = useState(null);
   const [backgroundImage, setBackgroundImage] = useState(null);
+  const [narrationEnabled, setNarrationEnabled] = useState(p.narration_enabled ?? true);
+  const [silentBeatSeconds, setSilentBeatSeconds] = useState(p.silent_beat_seconds || 5);
+  const [codeTheme, setCodeTheme] = useState(p.code_theme || "");
+  const [codeFontSize, setCodeFontSize] = useState(p.code_font_size || "");
   const qImgRef = useRef(); const aImgRef = useRef(); const bgImgRef = useRef();
   const [job, start] = useJob(async (j) => { if (j.status === "done") { await reload(); go(4); } });
   const running = job?.status === "running";
@@ -22,9 +27,12 @@ export default function CodeQuizStep({ p, reload, go }) {
 
   const save = () => start(api.postForm(`/api/projects/${p.id}/code-quiz`, {
     question: q, code, answer: a, show_title_card: showTitleCard, music,
+    narration_enabled: narrationEnabled, silent_beat_seconds: silentBeatSeconds,
     ...(questionImage ? { question_image: questionImage } : {}),
     ...(answerImage ? { answer_image: answerImage } : {}),
     ...(backgroundImage ? { background_image: backgroundImage } : {}),
+    ...(codeTheme ? { code_theme: codeTheme } : {}),
+    ...(codeFontSize ? { code_font_size: codeFontSize } : {}),
   }));
 
   return (
@@ -57,6 +65,14 @@ export default function CodeQuizStep({ p, reload, go }) {
           </div>
         </div>
         <Toggle label="Show question/answer text on screen" checked={showTitleCard} onChange={setShowTitleCard} />
+        <Toggle label="Narration (spoken voice)" checked={narrationEnabled} onChange={setNarrationEnabled} />
+        {!narrationEnabled && (
+          <div>
+            <Label htmlFor="cq-silent-seconds">Seconds per question/answer beat (no voice)</Label>
+            <input id="cq-silent-seconds" type="number" min={1} max={30} className="field w-32"
+              value={silentBeatSeconds} onChange={(e) => setSilentBeatSeconds(Number(e.target.value))} />
+          </div>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <Label htmlFor="cq-music">Music for this video</Label>
@@ -71,6 +87,18 @@ export default function CodeQuizStep({ p, reload, go }) {
               {backgroundImage ? backgroundImage.name : "Use a different image just for this video"}
             </button>
             <input ref={bgImgRef} type="file" accept="image/*" hidden onChange={(e) => setBackgroundImage(e.target.files[0] || null)} />
+          </div>
+          <div>
+            <Label htmlFor="cq-theme">Code block theme for this video</Label>
+            <select id="cq-theme" className="field" value={codeTheme} onChange={(e) => setCodeTheme(e.target.value)}>
+              <option value="">Use the default from Settings</option>
+              {CODE_THEMES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="cq-fontsize">Code font size for this video</Label>
+            <input id="cq-fontsize" type="number" min={18} max={64} className="field" value={codeFontSize}
+              placeholder="Use the default from Settings" onChange={(e) => setCodeFontSize(e.target.value)} />
           </div>
         </div>
         <button className="btn btn-primary" disabled={running || !q.trim() || !a.trim()} onClick={save}>

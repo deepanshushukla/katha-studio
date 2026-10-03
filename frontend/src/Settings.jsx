@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { Label, Section, Toggle } from "./components/ui";
 
+export const CODE_THEMES = ["dark", "light", "dracula", "monokai"];
+
 function Choice({ value, onChange, options }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -176,6 +178,17 @@ export default function Settings({ health }) {
               <input ref={musicRef} type="file" accept="audio/*" hidden onChange={(e) => e.target.files[0] && uploadMusic(e.target.files[0])} />
             </div>
             <p className="mt-1 text-xs text-mist">Tracks you add here are shared across the app (also usable from any story project's Video step).</p>
+          </div>
+          <div>
+            <Label htmlFor="cqtheme">Code block theme</Label>
+            <select id="cqtheme" className="field" value={s.code_theme} onChange={(e) => set("code_theme", e.target.value)}>
+              {CODE_THEMES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="cqsize">Code block font size: {s.code_font_size}</Label>
+            <input id="cqsize" type="range" min={18} max={64} step={2} value={s.code_font_size}
+              onChange={(e) => set("code_font_size", Number(e.target.value))} aria-label="Code block font size" />
           </div>
         </div>
       </Section>
