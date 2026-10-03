@@ -209,11 +209,26 @@ def test_provider(req: TestReq):
     raise HTTPException(400, "unknown kind")
 
 
+def _trademark_url() -> str:
+    tm = config.TRADEMARK_IMAGE
+    return f"/trademark/{tm.name}?v={int(tm.stat().st_mtime)}" if tm.exists() else ""
+
+
+@app.post("/api/settings/trademark-image")
+async def upload_trademark_image(file: UploadFile = File(...)):
+    data = await file.read()
+    try:
+        IMG._save_bytes(data, config.TRADEMARK_IMAGE)
+    except Exception:
+        raise HTTPException(400, "That file is not an image")
+    return {"trademark_url": _trademark_url()}
+
+
 @app.get("/api/catalog")
 def catalog():
     return {"styles": [{"key": k, "label": v["label"], "prompt": v["prompt"]} for k, v in SC.STYLES.items()],
             "transitions": ["auto", "cut"] + R.TRANSITIONS, "caption_styles": CAPTION_STYLES,
-            "highlights": list(HIGHLIGHT), "music": R.list_music()}
+            "highlights": list(HIGHLIGHT), "music": R.list_music(), "trademark_url": _trademark_url()}
 
 
 @app.get("/api/backgrounds")
@@ -796,6 +811,7 @@ def list_renders(pid: int):
 app.mount("/files", StaticFiles(directory=PROJECTS), name="files")
 app.mount("/cache", StaticFiles(directory=CACHE), name="cache")
 app.mount("/music", StaticFiles(directory=MUSIC), name="music")
+app.mount("/trademark", StaticFiles(directory=config.TRADEMARK_DIR), name="trademark")
 
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
