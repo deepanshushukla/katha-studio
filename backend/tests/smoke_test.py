@@ -2,6 +2,7 @@
 
 Run from katha-studio/:  backend/.venv/bin/python backend/tests/smoke_test.py
 """
+import io
 import json
 import os
 import subprocess
@@ -10,12 +11,14 @@ import tempfile
 import time
 from pathlib import Path
 
+from PIL import Image
+
 os.environ.setdefault("KATHA_DATA", tempfile.mkdtemp(prefix="katha_test_"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.config import FFMPEG, FFPROBE, PROJECTS  # noqa: E402
+from app.config import FFMPEG, FFPROBE, PROJECTS, TRADEMARK_IMAGE  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Scene, session  # noqa: E402
 
@@ -120,8 +123,65 @@ def test_self_recording_voice_change():
     print("[voice] OK  original preserved across repeated change-voice applies")
 
 
+def test_code_quiz_flow():
+    """A code-quiz project is created from raw question/code/answer text (no LLM), gets exactly
+    3 beat scenes (question/wait/answer), and renders end to end with the wait beat silent for 3s."""
+    c.put("/api/settings", json={"llm_provider": "offline", "image_provider": "offline", "tts_provider": "offline"})
+
+    buf = io.BytesIO()
+    Image.new("RGB", (600, 1000), (10, 20, 30)).save(buf, "PNG")
+    assert c.post("/api/settings/trademark-image", files={"file": ("bg.png", buf.getvalue(), "image/png")}).status_code == 200
+
+    pid = c.post("/api/projects", json={"content_type": "code_quiz", "language": "en"}).json()["id"]
+    question = "What does this log?\nA) 5\nB) 10\nC) 15\nD) 20"
+    code = "function counter() {\n  let x = 5\n  return x\n}"
+    answer = "The answer is B) 10, because the closure captures x by reference."
+
+    qbuf = io.BytesIO(); Image.new("RGB", (50, 50), (5, 6, 7)).save(qbuf, "PNG")
+    job = wait(c.post(f"/api/projects/{pid}/code-quiz",
+                       data={"question": question, "code": code, "answer": answer},
+                       files={"question_image": ("q.png", qbuf.getvalue(), "image/png")}).json())
+    scenes = job["result"]["scenes"]
+    assert [s["beat_type"] for s in scenes] == ["question", "wait", "answer"], scenes
+    assert scenes[0]["narration"] == question and scenes[0]["code_text"] == code
+    assert scenes[0]["content_image_url"], "question_image override should be stored"
+    assert scenes[1]["narration"] == "" and abs(scenes[1]["audio_duration"] - 3.0) < 0.01
+    assert scenes[2]["narration"] == answer and scenes[2]["code_text"] == code
+    assert all(s["show_title_card"] for s in scenes)
+
+    with session() as s:
+        old_question_image = Path(s.get(Scene, scenes[0]["id"]).content_image_path)
+    assert old_question_image.exists()
+
+    job = wait(c.post(f"/api/projects/{pid}/render", json={}).json())
+    p = c.get(f"/api/projects/{pid}").json()
+    mp4 = PROJECTS / p["last_render_url"].split("/files/")[1].split("?")[0]
+    info = probe(str(mp4))
+    dur = float(info["format"]["duration"])
+    assert abs(dur - job["result"]["duration"]) < 0.15, (dur, job["result"])
+    expected_min = scenes[0]["audio_duration"] + 3.0 + scenes[2]["audio_duration"]
+    assert dur > expected_min, (dur, expected_min)  # lead/tail padding only adds time, never removes it
+    print(f"[code-quiz] OK  duration={dur:.2f}s  file={mp4}")
+
+    # Re-submitting the form (editing the question) must replace the 3 scenes, not accumulate extras.
+    job = wait(c.post(f"/api/projects/{pid}/code-quiz",
+                       data={"question": "A different question", "code": "", "answer": "A different answer"}).json())
+    scenes2 = job["result"]["scenes"]
+    assert len(scenes2) == 3, scenes2
+    assert scenes2[0]["narration"] == "A different question"
+    assert not scenes2[0]["content_image_url"], "no override uploaded this time, so none should remain"
+    print("[code-quiz] OK  re-submitting replaces the 3 beat scenes without accumulating")
+
+    assert not old_question_image.exists(), "replaced per-beat override image must be cleaned up from disk"
+    print("[code-quiz] OK  replaced per-beat override image is deleted from disk")
+
+    assert TRADEMARK_IMAGE.exists()  # the shared trademark file itself must survive scene replacement
+    print("[code-quiz] OK  trademark image untouched by scene replacement")
+
+
 if __name__ == "__main__":
     run("hi")
     run("en")
     test_self_recording_voice_change()
+    test_code_quiz_flow()
     print("all good")
