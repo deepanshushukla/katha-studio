@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-night: #15153a;
+  --color-dusk: #1f1f4d;
+  --color-panel: #26265a;
+  --color-line: #3a3a78;
+  --color-parchment: #f3e9d2;
+  --color-mist: #b9b3d6;
+  --color-marigold: #f5b82e;
+  --color-marigold-deep: #d9951a;
+  --color-peacock: #25b3a5;
+  --color-sindoor: #e0483f;
+  --font-sans: "Hind", ui-sans-serif, system-ui, "Kohinoor Devanagari", sans-serif;
+  --font-display: "Yatra One", "Hind", serif;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(245, 184, 46, 0.10), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(37, 179, 165, 0.08), transparent 60%),
+    var(--color-night);
+  background-attachment: fixed;
+  color: var(--color-parchment);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible { outline: 2px solid var(--color-marigold); outline-offset: 2px; }
+
+.field {
+  width: 100%;
+  background: rgba(10, 10, 40, 0.45);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  color: var(--color-parchment);
+  line-height: 1.55;
+}
+.field:focus { border-color: var(--color-marigold); outline: none; }
+.field::placeholder { color: #8883ad; }
+select.field { appearance: none; background-image: linear-gradient(45deg, transparent 50%, #b9b3d6 50%), linear-gradient(135deg, #b9b3d6 50%, transparent 50%); background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 2rem; }
+select.field option { background: #1f1f4d; }
+
+.btn { display: inline-flex; align-items: center; gap: .45rem; border-radius: 999px; padding: .55rem 1.1rem; font-weight: 600; transition: background .15s, opacity .15s; white-space: nowrap; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: var(--color-marigold); color: #241a05; }
+.btn-primary:hover:not(:disabled) { background: #ffc94d; }
+.btn-ghost { border: 1px solid var(--color-line); color: var(--color-parchment); }
+.btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,.06); }
+.btn-sm { padding: .3rem .75rem; font-size: .85rem; }
+.btn-danger { color: var(--color-sindoor); }
+
+input[type=range] { accent-color: var(--color-marigold); width: 100%; }
+audio { height: 36px; width: 100%; filter: sepia(.2) saturate(.8); }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+@keyframes flicker { 0%,100% { transform: scaleY(1) } 50% { transform: scaleY(.9) translateY(1px) } }
+.flame { transform-origin: 50% 100%; animation: flicker 1.6s ease-in-out infinite; }

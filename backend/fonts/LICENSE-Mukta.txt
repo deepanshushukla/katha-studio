@@ -1,0 +1,2 @@
+Mukta by Ek Type — licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
+Obtained from Google Fonts via the @expo-google-fonts/mukta package.

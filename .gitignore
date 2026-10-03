@@ -1,0 +1,5 @@
+data/
+backend/.venv/
+backend/processed/
+frontend/node_modules/
+__pycache__/
