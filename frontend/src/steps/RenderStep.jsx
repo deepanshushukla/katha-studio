@@ -28,7 +28,7 @@ export default function RenderStep({ p, setP, reload }) {
       const j = jobs.find((x) => x.kind === "render");
       if (j) start(Promise.resolve(j));
     });
-    if (!p.metadata?.title) mstart(api.post(`/api/projects/${p.id}/metadata`));
+    if (p.content_type !== "code_quiz" && !p.metadata?.title) mstart(api.post(`/api/projects/${p.id}/metadata`));
     return () => player.current?.pause();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -145,6 +145,11 @@ export default function RenderStep({ p, setP, reload }) {
           )}
         </Section>
 
+        {p.content_type === "code_quiz" ? (
+        <Section title="Title" hint="Set on the Quiz step's project title — shown on screen at the start of the video.">
+          <p className="text-sm text-mist">{p.title}</p>
+        </Section>
+        ) : (
         <Section title="Title, description and hashtags" hint="Suggested for the upload; edit anything."
           actions={<button className="btn btn-ghost btn-sm" disabled={mjob?.status === "running"} onClick={() => mstart(api.post(`/api/projects/${p.id}/metadata`))}>Suggest again</button>}>
           {mjob?.status === "running" && <Progress job={mjob} />}
@@ -163,6 +168,7 @@ export default function RenderStep({ p, setP, reload }) {
             </div>
           </div>
         </Section>
+        )}
       </div>
 
       <div className="xl:sticky xl:top-20 xl:self-start">
