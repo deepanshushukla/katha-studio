@@ -20,6 +20,10 @@ class Project(SQLModel, table=True):
     style_key: str = "cinematic"
     style_custom: str = ""
     content_type: str = "story"          # story | code_quiz
+    narration_enabled: bool = True        # code_quiz: False = question/answer beats are silent
+    silent_beat_seconds: float = 5.0      # code_quiz: question/answer beat length when narration is off
+    code_theme: str = ""                  # code_quiz: "" = use the Settings default
+    code_font_size: int = 0               # code_quiz: 0 = use the Settings default
     target_seconds: int = 60
     seed: int = 0
     characters_json: str = "[]"          # [{name, description}]
@@ -96,6 +100,19 @@ def init_db() -> None:
             conn.commit()
         if "content_image_path" not in cols:
             conn.exec_driver_sql("ALTER TABLE scene ADD COLUMN content_image_path TEXT DEFAULT ''")
+            conn.commit()
+        proj_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(project)").fetchall()}
+        if "narration_enabled" not in proj_cols:
+            conn.exec_driver_sql("ALTER TABLE project ADD COLUMN narration_enabled BOOLEAN DEFAULT 1")
+            conn.commit()
+        if "silent_beat_seconds" not in proj_cols:
+            conn.exec_driver_sql("ALTER TABLE project ADD COLUMN silent_beat_seconds FLOAT DEFAULT 5.0")
+            conn.commit()
+        if "code_theme" not in proj_cols:
+            conn.exec_driver_sql("ALTER TABLE project ADD COLUMN code_theme TEXT DEFAULT ''")
+            conn.commit()
+        if "code_font_size" not in proj_cols:
+            conn.exec_driver_sql("ALTER TABLE project ADD COLUMN code_font_size INTEGER DEFAULT 0")
             conn.commit()
 
 

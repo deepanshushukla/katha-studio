@@ -155,21 +155,47 @@ def _heading_font(size: int):
     return _font_cache[key]
 
 
-TOKEN_COLORS = {
-    Token.Keyword: (198, 120, 221),
-    Token.Name.Function: (97, 175, 239),
-    Token.Literal.String: (152, 195, 121),
-    Token.Literal.Number: (209, 154, 102),
-    Token.Comment: (92, 99, 112),
-    Token.Operator: (224, 108, 117),
+CODE_THEMES = {
+    "dark": {
+        "bg": (18, 20, 26, 235), "outline": (70, 75, 90, 255), "default": (220, 223, 228),
+        "tokens": {
+            Token.Keyword: (198, 120, 221), Token.Name.Function: (97, 175, 239),
+            Token.Literal.String: (152, 195, 121), Token.Literal.Number: (209, 154, 102),
+            Token.Comment: (92, 99, 112), Token.Operator: (224, 108, 117),
+        },
+    },
+    "light": {
+        "bg": (248, 248, 242, 235), "outline": (200, 200, 200, 255), "default": (40, 42, 54),
+        "tokens": {
+            Token.Keyword: (170, 13, 145), Token.Name.Function: (0, 92, 197),
+            Token.Literal.String: (0, 128, 0), Token.Literal.Number: (28, 0, 207),
+            Token.Comment: (106, 115, 125), Token.Operator: (215, 58, 73),
+        },
+    },
+    "dracula": {
+        "bg": (40, 42, 54, 235), "outline": (98, 114, 164, 255), "default": (248, 248, 242),
+        "tokens": {
+            Token.Keyword: (255, 121, 198), Token.Name.Function: (80, 250, 123),
+            Token.Literal.String: (241, 250, 140), Token.Literal.Number: (189, 147, 249),
+            Token.Comment: (98, 114, 164), Token.Operator: (255, 85, 85),
+        },
+    },
+    "monokai": {
+        "bg": (39, 40, 34, 235), "outline": (73, 72, 62, 255), "default": (248, 248, 242),
+        "tokens": {
+            Token.Keyword: (249, 38, 114), Token.Name.Function: (166, 226, 46),
+            Token.Literal.String: (230, 219, 116), Token.Literal.Number: (174, 129, 255),
+            Token.Comment: (117, 113, 94), Token.Operator: (249, 38, 114),
+        },
+    },
 }
 
 
-def _token_color(tok) -> tuple[int, int, int]:
-    for t, c in TOKEN_COLORS.items():
+def _token_color(tok, theme: dict) -> tuple[int, int, int]:
+    for t, c in theme["tokens"].items():
         if tok in t:
             return c
-    return (220, 223, 228)
+    return theme["default"]
 
 
 def _wrap_code_lines(code: str, max_chars: int) -> list[str]:
@@ -192,15 +218,16 @@ def _truncate_to_fit(lines: list[str], line_h: int, pad: int, max_height: int) -
     return lines
 
 
-def draw_code_block(img: Image.Image, code: str) -> Image.Image:
+def draw_code_block(img: Image.Image, code: str, theme_key: str = "dark", base_size: int = 44) -> Image.Image:
     """Paste a syntax-highlighted monospace code block onto img, shrinking the font (and, as a last
     resort, truncating lines with an ellipsis) so it always stays inside its vertical band. No-op if blank."""
     if not code.strip():
         return img
+    theme = CODE_THEMES.get(theme_key, CODE_THEMES["dark"])
     pad = 48 * WORK_SCALE
     max_chars = 34
     max_height = int(img.height * 0.42)
-    size, min_size = 44 * WORK_SCALE, 18 * WORK_SCALE
+    size, min_size = max(18, base_size) * WORK_SCALE, 18 * WORK_SCALE
     lines = _wrap_code_lines(code, max_chars)
     while True:
         font = _mono_font(size)
@@ -214,9 +241,9 @@ def draw_code_block(img: Image.Image, code: str) -> Image.Image:
         box_h = len(lines) * line_h + 2 * pad
     char_w = font.getlength("M") or size * 0.6
     box_w = min(img.width - 2 * pad, int(max_chars * char_w) + 2 * pad)
-    box = Image.new("RGBA", (box_w, box_h), (18, 20, 26, 235))
+    box = Image.new("RGBA", (box_w, box_h), theme["bg"])
     d = ImageDraw.Draw(box)
-    d.rounded_rectangle([0, 0, box_w - 1, box_h - 1], radius=24 * WORK_SCALE, outline=(70, 75, 90, 255), width=3)
+    d.rounded_rectangle([0, 0, box_w - 1, box_h - 1], radius=24 * WORK_SCALE, outline=theme["outline"], width=3)
     y = pad
     for line in lines:
         x = pad
@@ -224,7 +251,7 @@ def draw_code_block(img: Image.Image, code: str) -> Image.Image:
             val = val.rstrip("\n")
             if not val:
                 continue
-            d.text((x, y), val, font=font, fill=_token_color(tok))
+            d.text((x, y), val, font=font, fill=_token_color(tok, theme))
             x += font.getlength(val)
         y += line_h
     img = img.convert("RGBA")
@@ -329,7 +356,8 @@ def fit_vertical(src: Path, dst: Path, warm: bool = False, overlay: dict | None 
         elif overlay.get("show_title_card") and overlay.get("title_text"):
             img = draw_beat_heading(img, overlay["title_text"])
         if overlay.get("code_text"):
-            img = draw_code_block(img, overlay["code_text"])
+            img = draw_code_block(img, overlay["code_text"], overlay.get("code_theme") or "dark",
+                                   overlay.get("code_font_size") or 44)
     if warm:
         img = warm_grade(img)
     img.save(dst, "JPEG", quality=94)
@@ -436,7 +464,9 @@ def render(scenes: list[dict], lang: str, opts: dict, work: Path, out: Path,
             img = work / f"img_{i:02d}.jpg"
             overlay = {"show_title_card": sc.get("show_title_card", False), "title_text": sc.get("narration", ""),
                        "code_text": sc.get("code_text", ""),
-                       "content_image_path": sc.get("content_image_path", "")} if sc.get("beat_type") else None
+                       "content_image_path": sc.get("content_image_path", ""),
+                       "code_theme": sc.get("code_theme", ""),
+                       "code_font_size": sc.get("code_font_size", 0)} if sc.get("beat_type") else None
             fit_vertical(Path(sc["image"]), img, bool(opts.get("warm")), overlay)
             frames = round(tl["lengths"][i] * FPS)
             clip = work / f"clip_{i:02d}.mp4"

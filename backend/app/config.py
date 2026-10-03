@@ -74,6 +74,8 @@ DEFAULTS: dict = {
     "auto_fallback": True,
     # Code quiz
     "default_code_quiz_music": "",       # filename inside MUSIC, picked by default for new code_quiz projects
+    "code_theme": "dark",                 # dark | light | dracula | monokai
+    "code_font_size": 44,                 # base size before shrink-to-fit, in the same units as before
 }
 
 _lock = Lock()

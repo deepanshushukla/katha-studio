@@ -191,9 +191,48 @@ def test_code_quiz_flow():
     print("[code-quiz] OK  trademark image untouched by scene replacement")
 
 
+def test_code_quiz_narration_toggle_and_theme():
+    """Narration can be switched off (question/answer beats become silent placeholders of a
+    configurable length) and the code block's theme/font size are settable per project."""
+    c.put("/api/settings", json={"llm_provider": "offline", "image_provider": "offline", "tts_provider": "offline"})
+    buf = io.BytesIO(); Image.new("RGB", (600, 1000), (10, 20, 30)).save(buf, "PNG")
+    c.post("/api/settings/trademark-image", files={"file": ("bg.png", buf.getvalue(), "image/png")})
+
+    pid = c.post("/api/projects", json={"content_type": "code_quiz", "language": "en"}).json()["id"]
+    job = wait(c.post(f"/api/projects/{pid}/code-quiz", data={
+        "question": "Q", "code": "let x = 5", "answer": "A",
+        "narration_enabled": "false", "silent_beat_seconds": "4",
+        "code_theme": "monokai", "code_font_size": "30",
+    }).json())
+    p = c.get(f"/api/projects/{pid}").json()
+    assert p["narration_enabled"] is False and p["silent_beat_seconds"] == 4.0
+    assert p["code_theme"] == "monokai" and p["code_font_size"] == 30
+    scenes = job["result"]["scenes"]
+    for sc in scenes:
+        if sc["beat_type"] in ("question", "answer"):
+            assert abs(sc["audio_duration"] - 4.0) < 0.01, sc
+        elif sc["beat_type"] == "wait":
+            assert abs(sc["audio_duration"] - 3.0) < 0.01, sc
+    print("[code-quiz] OK  narration-off produces silent, configurable-length question/answer beats")
+
+    job = wait(c.post(f"/api/projects/{pid}/render", json={}).json())
+    assert job["status"] == "done", job
+    print("[code-quiz] OK  renders cleanly with narration off and a non-default theme/font size")
+
+    # Voice-step regeneration must respect the same narration_enabled/silent_beat_seconds setting.
+    c.patch(f"/api/projects/{pid}", json={"pitch": 3})
+    job = wait(c.post(f"/api/projects/{pid}/narration", json={}).json())
+    scenes2 = c.get(f"/api/projects/{pid}").json()["scenes"]
+    for sc in scenes2:
+        if sc["beat_type"] in ("question", "answer"):
+            assert abs(sc["audio_duration"] - 4.0) < 0.01, sc
+    print("[code-quiz] OK  narration-off setting survives a Voice-step regeneration too")
+
+
 if __name__ == "__main__":
     run("hi")
     run("en")
     test_self_recording_voice_change()
     test_code_quiz_flow()
+    test_code_quiz_narration_toggle_and_theme()
     print("all good")

@@ -604,6 +604,9 @@ def generate_narration(pid: int, req: NarrationReq):
                 # The wait beat carries no narration — it's a fixed silent placeholder, never TTS.
                 TTS.make_silence(out, 3.0)
                 dur, words = 3.0, []
+            elif beat in ("question", "answer") and not p.narration_enabled:
+                TTS.make_silence(out, p.silent_beat_seconds)
+                dur, words = p.silent_beat_seconds, TTS.estimate_words(text, 0, p.silent_beat_seconds)
             else:
                 dur, words, used = TTS.synth(text, prov, voice, rate, pitch, out)
                 if used != prov:
@@ -744,6 +747,10 @@ async def set_code_quiz(pid: int,
                          code: str = Form(""),
                          show_title_card: bool = Form(True),
                          music: str = Form(""),
+                         narration_enabled: bool = Form(True),
+                         silent_beat_seconds: float = Form(5.0),
+                         code_theme: str = Form(""),
+                         code_font_size: int = Form(0),
                          question_image: Optional[UploadFile] = File(None),
                          answer_image: Optional[UploadFile] = File(None),
                          background_image: Optional[UploadFile] = File(None)):
@@ -815,6 +822,10 @@ async def set_code_quiz(pid: int,
                 new_scenes.append(sc.id)
             p.render_json = json.dumps({**json.loads(p.render_json or "{}"), "music": resolved_music},
                                         ensure_ascii=False)
+            p.narration_enabled = narration_enabled
+            p.silent_beat_seconds = silent_beat_seconds
+            p.code_theme = code_theme
+            p.code_font_size = code_font_size
             p.step = max(p.step, 2)
             touch(p); s.add(p); s.commit()
             prov, voice, rate, pitch = p.tts_provider, p.voice, p.rate, p.pitch
@@ -829,6 +840,10 @@ async def set_code_quiz(pid: int,
                 out = pdir(pid) / "audio" / f"scene_{sid}_wait.wav"
                 TTS.make_silence(out, 3.0)
                 dur, words = 3.0, []
+            elif not narration_enabled:
+                out = pdir(pid) / "audio" / f"scene_{sid}_silent.wav"
+                TTS.make_silence(out, silent_beat_seconds)
+                dur, words = silent_beat_seconds, TTS.estimate_words(text, 0, silent_beat_seconds)
             else:
                 out = pdir(pid) / "audio" / f"scene_{sid}_{uuid.uuid4().hex[:8]}.wav"
                 dur, words, used = TTS.synth(text, prov, voice, rate, pitch, out)
@@ -889,6 +904,9 @@ def render_video(pid: int, options: dict):
             s.add(p); s.commit()
         opts = {**R.DEFAULT_OPTIONS, **json.loads(p.render_json or "{}")}
         lang, seed, title = p.language, p.seed, p.title
+        settings = config.load_settings()
+        resolved_theme = p.code_theme or settings.get("code_theme", "dark")
+        resolved_font_size = p.code_font_size or settings.get("code_font_size", 44)
         need_images = opts.get("visual_mode") != "background"
         problems, items = [], []
         for i, sc in enumerate(scenes_of(s, pid)):
@@ -903,7 +921,8 @@ def render_video(pid: int, options: dict):
                               "words": json.loads(sc.words_json or "[]"),
                               "beat_type": sc.beat_type, "code_text": sc.code_text,
                               "show_title_card": sc.show_title_card, "narration": sc.narration,
-                              "content_image_path": sc.content_image_path})
+                              "content_image_path": sc.content_image_path,
+                              "code_theme": resolved_theme, "code_font_size": resolved_font_size})
         if not items:
             problems.append("no scenes")
     if problems:
